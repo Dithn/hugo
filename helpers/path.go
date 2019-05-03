@@ -26,6 +26,8 @@ import (
 
 	"github.com/gohugoio/hugo/config"
 
+	"github.com/gohugoio/hugo/hugofs"
+
 	"github.com/gohugoio/hugo/common/hugio"
 	_errors "github.com/pkg/errors"
 	"github.com/spf13/afero"
@@ -170,32 +172,6 @@ func (p *PathSpec) UnicodeSanitize(s string) string {
 func ReplaceExtension(path string, newExt string) string {
 	f, _ := fileAndExt(path, fpb)
 	return f + "." + newExt
-}
-
-// GetFirstThemeDir gets the root directory of the first theme, if there is one.
-// If there is no theme, returns the empty string.
-func (p *PathSpec) GetFirstThemeDir() string {
-	if p.ThemeSet() {
-		return p.AbsPathify(filepath.Join(p.ThemesDir, p.Themes()[0]))
-	}
-	return ""
-}
-
-// GetThemesDir gets the absolute root theme dir path.
-func (p *PathSpec) GetThemesDir() string {
-	if p.ThemeSet() {
-		return p.AbsPathify(p.ThemesDir)
-	}
-	return ""
-}
-
-// GetRelativeThemeDir gets the relative root directory of the current theme, if there is one.
-// If there is no theme, returns the empty string.
-func (p *PathSpec) GetRelativeThemeDir() string {
-	if p.ThemeSet() {
-		return strings.TrimPrefix(filepath.Join(p.ThemesDir, p.Themes()[0]), FilePathSeparator)
-	}
-	return ""
 }
 
 func makePathRelative(inPath string, possibleDirectories ...string) (string, error) {
@@ -425,47 +401,20 @@ func FindCWD() (string, error) {
 	return path, nil
 }
 
-// SymbolicWalk is like filepath.Walk, but it supports the root being a
-// symbolic link. It will still not follow symbolic links deeper down in
-// the file structure.
-func SymbolicWalk(fs afero.Fs, root string, walker filepath.WalkFunc) error {
-
-	// Sanity check
-	if root != "" && len(root) < 4 {
-		return errors.New("path is too short")
+// SymbolicWalk is like filepath.Walk, but it follows symbolic links.
+func SymbolicWalk(fs afero.Fs, root string, walker hugofs.WalkFunc) error {
+	if _, isOs := fs.(*afero.OsFs); isOs {
+		// Mainly to track symlinks.
+		fs = hugofs.NewBaseFileDecorator(fs)
 	}
 
-	// Handle the root first
-	fileInfo, realPath, err := getRealFileInfo(fs, root)
+	w := hugofs.NewWalkway(hugofs.WalkwayConfig{
+		Fs:     fs,
+		Root:   root,
+		WalkFn: walker,
+	})
 
-	if err != nil {
-		return walker(root, nil, err)
-	}
-
-	if !fileInfo.IsDir() {
-		return fmt.Errorf("cannot walk regular file %s", root)
-	}
-
-	if err := walker(realPath, fileInfo, err); err != nil && err != filepath.SkipDir {
-		return err
-	}
-
-	// Some of Hugo's filesystems represents an ordered root folder, i.e. project first, then theme folders.
-	// Make sure that order is preserved. afero.Walk will sort the directories down in the file tree,
-	// but we don't care about that.
-	rootContent, err := readDir(fs, root, false)
-
-	if err != nil {
-		return walker(root, nil, err)
-	}
-
-	for _, fi := range rootContent {
-		if err := afero.Walk(fs, filepath.Join(root, fi.Name()), walker); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return w.Walk()
 
 }
 
@@ -485,6 +434,7 @@ func readDir(fs afero.Fs, dirname string, doSort bool) ([]os.FileInfo, error) {
 	return list, nil
 }
 
+// TODO(bep) mod add theme fs with no lstat and a check on Open
 func getRealFileInfo(fs afero.Fs, path string) (os.FileInfo, string, error) {
 	fileInfo, err := LstatIfPossible(fs, path)
 	realPath := path

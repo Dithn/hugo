@@ -262,7 +262,7 @@ func (sc *serverCmd) server(cmd *cobra.Command, args []string) error {
 			relWatchDirs[i], _ = helpers.GetRelativePath(dir, baseWatchDir)
 		}
 
-		rootWatchDirs := strings.Join(helpers.UniqueStrings(helpers.ExtractRootPaths(relWatchDirs)), ",")
+		rootWatchDirs := strings.Join(helpers.UniqueStringsSorted(helpers.ExtractRootPaths(relWatchDirs)), ",")
 
 		jww.FEEDBACK.Printf("Watching for changes in %s%s{%s}\n", baseWatchDir, helpers.FilePathSeparator, rootWatchDirs)
 		watcher, err := c.newWatcher(watchDirs...)

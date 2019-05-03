@@ -18,6 +18,7 @@ package os
 import (
 	"errors"
 	"fmt"
+	"os"
 	_os "os"
 
 	"github.com/gohugoio/hugo/deps"
@@ -26,23 +27,21 @@ import (
 )
 
 // New returns a new instance of the os-namespaced template functions.
-func New(deps *deps.Deps) *Namespace {
+func New(d *deps.Deps) *Namespace {
 
-	// Since Hugo 0.38 we can have multiple content dirs. This can make it hard to
-	// reason about where the file is placed relative to the project root.
-	// To make the {{ readFile .Filename }} variant just work, we create a composite
-	// filesystem that first checks the work dir fs and then the content fs.
 	var rfs afero.Fs
-	if deps.Fs != nil {
-		rfs = deps.Fs.WorkingDir
-		if deps.PathSpec != nil && deps.PathSpec.BaseFs != nil {
-			rfs = afero.NewReadOnlyFs(afero.NewCopyOnWriteFs(deps.PathSpec.BaseFs.Content.Fs, deps.Fs.WorkingDir))
+	if d.Fs != nil {
+		// TODO(bep) mod consider afero.NewCopyOnWriteFs(BaseFs.Work.Fs. ...)
+		rfs = d.Fs.WorkingDir
+		if d.PathSpec != nil && d.PathSpec.BaseFs != nil {
+			rfs = afero.NewReadOnlyFs(afero.NewCopyOnWriteFs(d.PathSpec.BaseFs.Content.Fs, d.Fs.WorkingDir))
 		}
+
 	}
 
 	return &Namespace{
 		readFileFs: rfs,
-		deps:       deps,
+		deps:       d,
 	}
 }
 
@@ -76,6 +75,9 @@ func readFile(fs afero.Fs, filename string) (string, error) {
 			return "", fmt.Errorf("file %q is too big", filename)
 		}
 	} else {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("file %q does not exist", filename)
+		}
 		return "", err
 	}
 	b, err := afero.ReadFile(fs, filename)
@@ -94,6 +96,10 @@ func (ns *Namespace) ReadFile(i interface{}) (string, error) {
 	s, err := cast.ToStringE(i)
 	if err != nil {
 		return "", err
+	}
+
+	if ns.deps.PathSpec != nil {
+		s = ns.deps.PathSpec.RelPathify(s)
 	}
 
 	return readFile(ns.readFileFs, s)

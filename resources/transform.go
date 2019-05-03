@@ -515,6 +515,9 @@ func (r *transformedResource) initTransform(setContent, publish bool) error {
 
 		// Copy the file from cache to /public
 		_, src, err := r.cache.fileCache.Get(r.sourceFilename)
+		if src == nil {
+			panic(fmt.Sprintf("[BUG] resource cache file not found: %q", r.sourceFilename))
+		}
 
 		if err == nil {
 			defer src.Close()

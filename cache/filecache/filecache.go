@@ -307,9 +307,15 @@ func (f Caches) Get(name string) *Cache {
 // NewCaches creates a new set of file caches from the given
 // configuration.
 func NewCaches(p *helpers.PathSpec) (Caches, error) {
-	dcfg, err := decodeConfig(p)
-	if err != nil {
-		return nil, err
+	var dcfg Configs
+	if c, ok := p.Cfg.Get("filecacheConfigs").(Configs); ok {
+		dcfg = c
+	} else {
+		var err error
+		dcfg, err = DecodeConfig(p.Fs.Source, p.Cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	fs := p.Fs.Source
@@ -319,7 +325,7 @@ func NewCaches(p *helpers.PathSpec) (Caches, error) {
 		var cfs afero.Fs
 
 		if v.isResourceDir {
-			cfs = p.BaseFs.Resources.Fs
+			cfs = p.BaseFs.ResourcesCache
 		} else {
 			cfs = fs
 		}
@@ -336,7 +342,7 @@ func NewCaches(p *helpers.PathSpec) (Caches, error) {
 		} else {
 			baseDir = filepath.Join(v.Dir, k)
 		}
-		if err = cfs.MkdirAll(baseDir, 0777); err != nil && !os.IsExist(err) {
+		if err := cfs.MkdirAll(baseDir, 0777); err != nil && !os.IsExist(err) {
 			return nil, err
 		}
 

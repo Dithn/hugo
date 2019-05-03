@@ -20,10 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gohugoio/hugo/helpers"
+	"github.com/spf13/afero"
 
 	"github.com/gohugoio/hugo/config"
-	"github.com/gohugoio/hugo/hugofs"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
@@ -57,14 +56,11 @@ dir = "/path/to/c3"
 
 	cfg, err := config.FromConfigString(configStr, "toml")
 	assert.NoError(err)
-	fs := hugofs.NewMem(cfg)
-	p, err := helpers.NewPathSpec(fs, cfg)
+	fs := afero.NewMemMapFs()
+	decoded, err := DecodeConfig(fs, cfg)
 	assert.NoError(err)
 
-	decoded, err := decodeConfig(p)
-	assert.NoError(err)
-
-	assert.Equal(4, len(decoded))
+	assert.Equal(5, len(decoded))
 
 	c2 := decoded["getcsv"]
 	assert.Equal("11h0m0s", c2.MaxAge.String())
@@ -105,14 +101,11 @@ dir = "/path/to/c3"
 
 	cfg, err := config.FromConfigString(configStr, "toml")
 	assert.NoError(err)
-	fs := hugofs.NewMem(cfg)
-	p, err := helpers.NewPathSpec(fs, cfg)
+	fs := afero.NewMemMapFs()
+	decoded, err := DecodeConfig(fs, cfg)
 	assert.NoError(err)
 
-	decoded, err := decodeConfig(p)
-	assert.NoError(err)
-
-	assert.Equal(4, len(decoded))
+	assert.Equal(5, len(decoded))
 
 	for _, v := range decoded {
 		assert.Equal(time.Duration(0), v.MaxAge)
@@ -133,15 +126,13 @@ func TestDecodeConfigDefault(t *testing.T) {
 		cfg.Set("cacheDir", "/cache/thecache")
 	}
 
-	fs := hugofs.NewMem(cfg)
-	p, err := helpers.NewPathSpec(fs, cfg)
-	assert.NoError(err)
+	fs := afero.NewMemMapFs()
 
-	decoded, err := decodeConfig(p)
+	decoded, err := DecodeConfig(fs, cfg)
 
 	assert.NoError(err)
 
-	assert.Equal(4, len(decoded))
+	assert.Equal(5, len(decoded))
 
 	imgConfig := decoded[cacheKeyImages]
 	jsonConfig := decoded[cacheKeyGetJSON]
@@ -183,11 +174,9 @@ dir = "/"
 
 	cfg, err := config.FromConfigString(configStr, "toml")
 	assert.NoError(err)
-	fs := hugofs.NewMem(cfg)
-	p, err := helpers.NewPathSpec(fs, cfg)
-	assert.NoError(err)
+	fs := afero.NewMemMapFs()
 
-	_, err = decodeConfig(p)
+	_, err = DecodeConfig(fs, cfg)
 	assert.Error(err)
 
 }

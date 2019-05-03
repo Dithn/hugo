@@ -12,28 +12,3 @@
 // limitations under the License.
 
 package hugofs
-
-import (
-	"os"
-
-	"github.com/spf13/afero"
-)
-
-var (
-	_ afero.Fs = (*noLstatFs)(nil)
-)
-
-type noLstatFs struct {
-	afero.Fs
-}
-
-// NewNoLstatFs creates a new filesystem with no Lstat support.
-func NewNoLstatFs(fs afero.Fs) afero.Fs {
-	return &noLstatFs{Fs: fs}
-}
-
-// LstatIfPossible always delegates to Stat.
-func (fs *noLstatFs) LstatIfPossible(name string) (os.FileInfo, bool, error) {
-	fi, err := fs.Stat(name)
-	return fi, false, err
-}

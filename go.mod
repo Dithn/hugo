@@ -19,7 +19,9 @@ require (
 	github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385
 	github.com/fortytw2/leaktest v1.3.0
 	github.com/fsnotify/fsnotify v1.4.7
+	github.com/go-errors/errors v1.0.1
 	github.com/gobwas/glob v0.2.3
+	github.com/gohugoio/testmodBuilder/mods v0.0.0-20190520184928-c56af20f2e95
 	github.com/google/go-cmp v0.3.0
 	github.com/gorilla/websocket v1.4.0
 	github.com/hashicorp/go-immutable-radix v1.0.0
@@ -41,15 +43,17 @@ require (
 	github.com/nicksnyder/go-i18n v1.10.0
 	github.com/niklasfasching/go-org v0.1.1
 	github.com/olekukonko/tablewriter v0.0.0-20180506121414-d4647c9c7a84
+	github.com/op/go-logging v0.0.0-20160315200505-970db520ece7
 	github.com/pelletier/go-toml v1.4.0 // indirect
 	github.com/pkg/errors v0.8.1
+	github.com/rogpeppe/go-internal v1.3.0
 	github.com/russross/blackfriday v1.5.3-0.20190124082335-a477dd164691
 	github.com/sanity-io/litter v1.1.0
 	github.com/shurcooL/sanitized_anchor_name v1.0.0 // indirect
 	github.com/spf13/afero v1.2.2
 	github.com/spf13/cast v1.3.0
 	github.com/spf13/cobra v0.0.3
-	github.com/spf13/fsync v0.0.0-20170320142552-12a01e648f05
+	github.com/spf13/fsync v0.9.0
 	github.com/spf13/jwalterweatherman v1.1.0
 	github.com/spf13/pflag v1.0.3
 	github.com/spf13/viper v1.4.0
@@ -71,3 +75,5 @@ require (
 )
 
 replace github.com/markbates/inflect => github.com/markbates/inflect v0.0.0-20171215194931-a12c3aec81a6
+
+go 1.13
