@@ -18,7 +18,7 @@ require (
 	github.com/cli/safeexec v1.0.0
 	github.com/disintegration/gift v1.2.1
 	github.com/dustin/go-humanize v1.0.0
-	github.com/evanw/esbuild v0.11.16
+	github.com/evanw/esbuild v0.12.11
 	github.com/fortytw2/leaktest v1.3.0
 	github.com/frankban/quicktest v1.12.0
 	github.com/fsnotify/fsnotify v1.4.9
@@ -55,7 +55,7 @@ require (
 	github.com/spf13/jwalterweatherman v1.1.0
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.7.0
-	github.com/tdewolff/minify/v2 v2.9.16
+	github.com/tdewolff/minify/v2 v2.9.18
 	github.com/yuin/goldmark v1.3.8
 	github.com/yuin/goldmark-highlighting v0.0.0-20200307114337-60d527fdb691
 	gocloud.dev v0.20.0
