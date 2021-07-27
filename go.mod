@@ -8,7 +8,7 @@ require (
 	github.com/alecthomas/chroma v0.9.2
 	github.com/alecthomas/repr v0.0.0-20181024024818-d37bc2a10ba1 // indirect
 	github.com/armon/go-radix v1.0.0
-	github.com/aws/aws-sdk-go v1.38.23
+	github.com/aws/aws-sdk-go v1.40.8
 	github.com/bep/debounce v1.2.0
 	github.com/bep/gitmap v1.1.2
 	github.com/bep/godartsass v0.12.0
@@ -18,9 +18,9 @@ require (
 	github.com/cli/safeexec v1.0.0
 	github.com/disintegration/gift v1.2.1
 	github.com/dustin/go-humanize v1.0.0
-	github.com/evanw/esbuild v0.11.16
+	github.com/evanw/esbuild v0.12.16
 	github.com/fortytw2/leaktest v1.3.0
-	github.com/frankban/quicktest v1.12.0
+	github.com/frankban/quicktest v1.13.0
 	github.com/fsnotify/fsnotify v1.4.9
 	github.com/getkin/kin-openapi v0.61.0
 	github.com/ghodss/yaml v1.0.0
@@ -47,7 +47,7 @@ require (
 	github.com/rogpeppe/go-internal v1.8.0
 	github.com/russross/blackfriday v1.5.3-0.20200218234912-41c5fccfd6f6
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
-	github.com/sanity-io/litter v1.5.0
+	github.com/sanity-io/litter v1.5.1
 	github.com/spf13/afero v1.6.0
 	github.com/spf13/cast v1.3.1
 	github.com/spf13/cobra v1.1.3
@@ -55,12 +55,12 @@ require (
 	github.com/spf13/jwalterweatherman v1.1.0
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.7.0
-	github.com/tdewolff/minify/v2 v2.9.18
-	github.com/yuin/goldmark v1.3.9
+	github.com/tdewolff/minify/v2 v2.9.19
+	github.com/yuin/goldmark v1.4.0
 	github.com/yuin/goldmark-highlighting v0.0.0-20200307114337-60d527fdb691
 	gocloud.dev v0.20.0
 	golang.org/x/image v0.0.0-20210220032944-ac19c3e999fb
-	golang.org/x/net v0.0.0-20210316092652-d523dce5a7f4
+	golang.org/x/net v0.0.0-20210614182718-04defd469f4e
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/text v0.3.6
 	google.golang.org/api v0.45.0
