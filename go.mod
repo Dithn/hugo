@@ -13,6 +13,7 @@ require (
 	github.com/bep/gitmap v1.1.2
 	github.com/bep/godartsass v0.12.0
 	github.com/bep/golibsass v1.0.0
+	github.com/bep/gotranslators v0.0.0-20210726170149-50377fc92c80
 	github.com/bep/gowebp v0.1.0
 	github.com/bep/tmc v0.5.1
 	github.com/cli/safeexec v1.0.0
@@ -22,40 +23,41 @@ require (
 	github.com/fortytw2/leaktest v1.3.0
 	github.com/frankban/quicktest v1.13.0
 	github.com/fsnotify/fsnotify v1.4.9
-	github.com/getkin/kin-openapi v0.61.0
+	github.com/getkin/kin-openapi v0.67.0
 	github.com/ghodss/yaml v1.0.0
-	github.com/gobuffalo/flect v0.2.2
+	github.com/go-playground/locales v0.13.0
+	github.com/gobuffalo/flect v0.2.3
 	github.com/gobwas/glob v0.2.3
 	github.com/gohugoio/go-i18n/v2 v2.1.3-0.20210430103248-4c28c89f8013
 	github.com/gohugoio/testmodBuilder/mods v0.0.0-20190520184928-c56af20f2e95
-	github.com/google/go-cmp v0.5.5
+	github.com/google/go-cmp v0.5.6
 	github.com/gorilla/websocket v1.4.2
 	github.com/jdkato/prose v1.2.1
 	github.com/kylelemons/godebug v1.1.0
 	github.com/kyokomi/emoji/v2 v2.2.8
 	github.com/magefile/mage v1.11.0
-	github.com/mattn/go-isatty v0.0.12
+	github.com/mattn/go-isatty v0.0.13
 	github.com/miekg/mmark v1.3.6
-	github.com/mitchellh/hashstructure v1.0.0
-	github.com/mitchellh/mapstructure v1.3.3
+	github.com/mitchellh/hashstructure v1.1.0
+	github.com/mitchellh/mapstructure v1.4.1
 	github.com/muesli/smartcrop v0.3.0
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/niklasfasching/go-org v1.5.0
 	github.com/olekukonko/tablewriter v0.0.5
-	github.com/pelletier/go-toml v1.9.0
+	github.com/pelletier/go-toml v1.9.3
 	github.com/pkg/errors v0.9.1
 	github.com/rogpeppe/go-internal v1.8.0
 	github.com/russross/blackfriday v1.5.3-0.20200218234912-41c5fccfd6f6
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
-	github.com/sanity-io/litter v1.5.0
+	github.com/sanity-io/litter v1.5.1
 	github.com/spf13/afero v1.6.0
-	github.com/spf13/cast v1.3.1
-	github.com/spf13/cobra v1.1.3
+	github.com/spf13/cast v1.4.0
+	github.com/spf13/cobra v1.2.1
 	github.com/spf13/fsync v0.9.0
 	github.com/spf13/jwalterweatherman v1.1.0
 	github.com/spf13/pflag v1.0.5
-	github.com/spf13/viper v1.7.0
-	github.com/tdewolff/minify/v2 v2.9.19
+	github.com/spf13/viper v1.8.1
+	github.com/tdewolff/minify/v2 v2.9.20
 	github.com/yuin/goldmark v1.4.0
 	github.com/yuin/goldmark-highlighting v0.0.0-20200307114337-60d527fdb691
 	gocloud.dev v0.20.0
@@ -63,9 +65,8 @@ require (
 	golang.org/x/net v0.0.0-20210614182718-04defd469f4e
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/text v0.3.6
-	google.golang.org/api v0.45.0
+	google.golang.org/api v0.51.0
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
-	gopkg.in/ini.v1 v1.51.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0
 )
 
