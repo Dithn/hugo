@@ -21,7 +21,7 @@ require (
 	github.com/fortytw2/leaktest v1.3.0
 	github.com/frankban/quicktest v1.13.0
 	github.com/fsnotify/fsnotify v1.4.9
-	github.com/getkin/kin-openapi v0.68.0
+	github.com/getkin/kin-openapi v0.74.0
 	github.com/ghodss/yaml v1.0.0
 	github.com/gobuffalo/flect v0.2.3
 	github.com/gobwas/glob v0.2.3
@@ -50,7 +50,7 @@ require (
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
 	github.com/sanity-io/litter v1.5.1
 	github.com/spf13/afero v1.6.0
-	github.com/spf13/cast v1.4.0
+	github.com/spf13/cast v1.4.1
 	github.com/spf13/cobra v1.2.1
 	github.com/spf13/fsync v0.9.0
 	github.com/spf13/jwalterweatherman v1.1.0
