@@ -14,6 +14,7 @@
 package pageparser
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -21,9 +22,36 @@ import (
 	"github.com/gohugoio/hugo/parser/metadecoders"
 )
 
+func FuzzParse(f *testing.F) {
+	samples := []string{
+		`{{< foo >}}`,
+		`{{% foo %}}`,
+		`{{< foo >}} {{< bar >}}`,
+		`---
+title: "Front Matters"
+---
+
+This is some summary. This is some summary. This is some summary. This is some summary.
+
+ <!--more-->
+
+ Foo bars.
+		 
+		`,
+	}
+	for _, s := range samples {
+		f.Add([]byte(s))
+	}
+
+	f.Fuzz(func(t *testing.T, b []byte) {
+		cfg := Config{}
+		_, _ = parseBytes(b, cfg, lexIntroSection)
+	})
+}
+
 func BenchmarkParse(b *testing.B) {
 	start := `
-	
+
 
 ---
 title: "Front Matters"
@@ -37,36 +65,9 @@ This is some summary. This is some summary. This is some summary. This is some s
 
 `
 	input := []byte(start + strings.Repeat(strings.Repeat("this is text", 30)+"{{< myshortcode >}}This is some inner content.{{< /myshortcode >}}", 10))
-	cfg := Config{EnableEmoji: false}
+	cfg := Config{}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := parseBytes(input, cfg, lexIntroSection); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkParseWithEmoji(b *testing.B) {
-	start := `
-	
-
----
-title: "Front Matters"
-description: "It really does"
----
-
-This is some summary. This is some summary. This is some summary. This is some summary.
-
- <!--more-->
-
-
-`
-	input := []byte(start + strings.Repeat("this is not emoji: ", 50) + strings.Repeat("some text ", 70) + strings.Repeat("this is not: ", 50) + strings.Repeat("but this is a :smile: ", 3) + strings.Repeat("some text ", 70))
-	cfg := Config{EnableEmoji: true}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := parseBytes(input, cfg, lexIntroSection); err != nil {
 			b.Fatal(err)
 		}
@@ -87,4 +88,63 @@ func TestFormatFromFrontMatterType(t *testing.T) {
 	} {
 		c.Assert(FormatFromFrontMatterType(test.typ), qt.Equals, test.expect)
 	}
+}
+
+func TestIsProbablyItemsSource(t *testing.T) {
+	c := qt.New(t)
+
+	input := ` {{< foo >}} `
+	items, err := collectStringMain(input)
+	c.Assert(err, qt.IsNil)
+
+	c.Assert(IsProbablySourceOfItems([]byte(input), items), qt.IsTrue)
+	c.Assert(IsProbablySourceOfItems(bytes.Repeat([]byte(" "), len(input)), items), qt.IsFalse)
+	c.Assert(IsProbablySourceOfItems([]byte(`{{< foo >}}  `), items), qt.IsFalse)
+	c.Assert(IsProbablySourceOfItems([]byte(``), items), qt.IsFalse)
+}
+
+func TestHasShortcode(t *testing.T) {
+	c := qt.New(t)
+
+	c.Assert(HasShortcode("{{< foo >}}"), qt.IsTrue)
+	c.Assert(HasShortcode("aSDasd  SDasd aSD\n\nasdfadf{{% foo %}}\nasdf"), qt.IsTrue)
+	c.Assert(HasShortcode("{{</* foo */>}}"), qt.IsFalse)
+	c.Assert(HasShortcode("{{%/* foo */%}}"), qt.IsFalse)
+}
+
+func BenchmarkHasShortcode(b *testing.B) {
+	withShortcode := strings.Repeat("this is text", 30) + "{{< myshortcode >}}This is some inner content.{{< /myshortcode >}}" + strings.Repeat("this is text", 30)
+	withoutShortcode := strings.Repeat("this is text", 30) + "This is some inner content." + strings.Repeat("this is text", 30)
+	b.Run("Match", func(b *testing.B) {
+		for b.Loop() {
+			HasShortcode(withShortcode)
+		}
+	})
+
+	b.Run("NoMatch", func(b *testing.B) {
+		for b.Loop() {
+			HasShortcode(withoutShortcode)
+		}
+	})
+}
+
+func TestSummaryDividerStartingFromMain(t *testing.T) {
+	c := qt.New(t)
+
+	input := `aaa <!--more--> bbb`
+	items, err := collectStringMain(input)
+	c.Assert(err, qt.IsNil)
+
+	c.Assert(items, qt.HasLen, 4)
+	c.Assert(items[1].Type, qt.Equals, TypeLeadSummaryDivider)
+}
+
+func TestIdeographicAfterSummaryDivider(t *testing.T) {
+	c := qt.New(t)
+
+	input := []byte(`aaa <!--more-->   　bbb`)
+	items, err := collectStringMain(string(input))
+	c.Assert(err, qt.IsNil)
+	c.Assert(items, qt.HasLen, 4)
+	c.Assert(items[2].ValStr(input), qt.Equals, "\u3000bbb")
 }

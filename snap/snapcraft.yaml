@@ -1,101 +1,226 @@
 name: hugo
-version: git
+base: core26
+adopt-info: hugo
+confinement: strict
+title: Hugo
+icon: snap/local/logo.png
 summary: Fast and Flexible Static Site Generator
 description: |
-  Hugo is a static HTML and CSS website generator written in Go. It is
-  optimized for speed, easy use and configurability. Hugo takes a directory
-  with content and templates and renders them into a full HTML website.
+  Hugo is a static site generator written in Go, optimized for speed and
+  designed for flexibility. With its advanced templating system and fast asset
+  pipelines, Hugo renders a complete site in seconds, often less.
+
+  Due to its flexible framework, multilingual support, and powerful taxonomy
+  system, Hugo is widely used to create:
+  * Corporate, government, nonprofit, education, news, event, and project sites
+  * Documentation sites
+  * Image portfolios
+  * Landing pages
+  * Business, professional, and personal blogs
+  * Resumes and CVs
+
+# Project links
+issues: https://github.com/gohugoio/hugo/issues
 license: "Apache-2.0"
-base: core20
-confinement: strict
-grade: devel # "devel" or "stable"
+source-code: https://github.com/gohugoio/hugo.git
+website: https://gohugo.io/
 
-package-repositories:
-  - type: apt
-    components: [main]
-    suites: [focal]
-    key-id: 9FD3B784BC1C6FC31A8A0A1C1655A0AB68576280
-    url: https://deb.nodesource.com/node_16.x
+platforms:
+  amd64:
+  arm64:
 
+lint:
+  ignore:
+    - library:
+        - usr/lib/**/libform.so.*
+        - usr/lib/**/libgmpxx.so.*
+        - usr/lib/**/liblua*.so.*
+        - usr/lib/**/libmenu.so.*
+        - usr/lib/**/libpanel.so.*
+        - usr/lib/**/libperl.so.*
+
+# Interfaces
+plugs:
+  dot-aws:
+    interface: personal-files
+    read:
+      - $HOME/.aws
+  dot-azure:
+    interface: personal-files
+    read:
+      - $HOME/.azure
+  dot-cache-hugo:
+    interface: personal-files
+    write:
+      - $HOME/.cache/hugo_cache
+  dot-config-gcloud:
+    interface: personal-files
+    read:
+      - $HOME/.config/gcloud
+  etc-gitconfig:
+    interface: system-files
+    read:
+      - /etc/gitconfig
+  gitconfig:
+    interface: personal-files
+    read:
+      - $HOME/.config/git
+      - $HOME/.gitconfig
+      - $HOME/.gitconfig.local
+  ssh-keys:
+    interface: ssh-keys
+
+# Runtime environment
+environment:
+  # Home
+  HOME: $SNAP_REAL_HOME
+
+  # Ruby
+  GEM_HOME: $SNAP_USER_DATA/gems
+  GEM_PATH: $SNAP/usr/share/rubygems-integration/all:$SNAP/usr/lib/ruby/gems/3.3.0:$SNAP/var/lib/gems/3.3.0
+  RUBYLIB: $SNAP/usr/lib/ruby/vendor_ruby/3.3.0:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ruby/vendor_ruby/3.3.0:$SNAP/usr/lib/ruby/vendor_ruby:$SNAP/usr/lib/ruby/3.3.0:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ruby/3.3.0
+
+  # Node
+  npm_config_cache: $SNAP_USER_DATA/.npm
+  npm_config_init_module: $SNAP_USER_DATA/.npm-init.js
+  npm_config_userconfig: $SNAP_USER_DATA/.npmrc
+
+  # Other
+  PYTHONHOME: /usr:$SNAP/usr
+  pandoc_datadir: $SNAP/usr/share/pandoc
+  GIT_EXEC_PATH: $SNAP/usr/lib/git-core
+  GOCACHE: $SNAP_USER_DATA/.cache/go-build
+
+  # Allowlist for environment variables
+  # Default:                (?i)^((HTTPS?|NO)_PROXY|PATH(EXT)?|APPDATA|TE?MP|TERM|GO\w+|(XDG_CONFIG_)?HOME|USERPROFILE|SSH_AUTH_SOCK|DISPLAY|LANG|SYSTEMDRIVE|PROGRAMDATA)$
+  HUGO_SECURITY_EXEC_OSENV: (?i)^((HTTPS?|NO)_PROXY|PATH(EXT)?|APPDATA|TE?MP|TERM|GO\w+|(XDG_CONFIG_)?HOME|USERPROFILE|SSH_AUTH_SOCK|DISPLAY|LANG|SYSTEMDRIVE|PROGRAMDATA|GIT_EXEC_PATH|LD_LIBRARY_PATH|npm_config_(cache|init_module|userconfig)|pandoc_datadir|PYTHONHOME|SNAP|GEM_HOME|GEM_PATH|RUBYLIB)$
+
+# App definition
 apps:
   hugo:
     command: bin/hugo
     completer: hugo-completion
     plugs:
+      - desktop
+      - dot-aws
+      - dot-azure
+      - dot-cache-hugo
+      - dot-config-gcloud
+      - etc-gitconfig
+      - gitconfig
       - home
       - network-bind
       - removable-media
+      - ssh-keys
 
+# Build parts
 parts:
+  asciidoctor:
+    plugin: nil
+    stage-packages:
+          - asciidoctor
+          - ruby-dev
+          - rubygems-integration
+    override-build: |
+      set -ex
+      craftctl default
+      # Use env ruby to ensure the snap's ruby interpreter is used
+      sed -i '1s|#!/usr/bin/ruby|#!/usr/bin/env ruby|' $CRAFT_PART_INSTALL/usr/bin/asciidoctor
+      # Patch rubygems to avoid flock() errors in strict confinement
+      sed -i 's|!solaris_platform|win_platform|' $CRAFT_PART_INSTALL/usr/lib/ruby/vendor_ruby/rubygems.rb
+
+  dart-sass:
+    plugin: nil
+    build-packages:
+      - curl
+    override-build: |
+      set -ex
+      craftctl default
+      case "$CRAFT_ARCH_BUILD_FOR" in
+        amd64)  arch=x64    ;;
+        arm64)  arch=arm64  ;;
+        *)      arch=""     ;;
+      esac
+      if [[ -n $arch ]]; then
+        url=$(curl -s https://api.github.com/repos/sass/dart-sass/releases/latest | awk -F\" "/browser_download_url.*-linux-${arch}.tar.gz/{print \$(NF-1)}")
+        curl -LO --retry-connrefused --retry 10 "${url}"
+        tar xf dart-sass-*-linux-${arch}.tar.gz
+        install -d $CRAFT_PART_INSTALL/bin
+        cp -av dart-sass/* $CRAFT_PART_INSTALL/bin/
+      fi
+
   git:
     plugin: nil
     stage-packages:
       - git
-    organize:
-      usr/bin/: bin/
     prime:
-      - bin/git
+      - usr/bin/git
+      - usr/lib
 
-  hugo:
+  go:
     plugin: nil
-    build-snaps: [go/1.16/stable]
-    source: .
-    override-build: |
-      set -ex
-
-      echo "\nStarting override-build:"
-      export GOPATH=$(realpath ../go)
-      export PATH=$GOPATH/bin:$PATH
-
-      echo ' * Running "go get -v github.com/magefile/mage"...'
-      go get -v github.com/magefile/mage
-
-      #echo ' * Running "mage -v test"...'
-      #mage -v test
-
-      echo " * SNAPCRAFT_IMAGE_INFO=${SNAPCRAFT_IMAGE_INFO=}"
-      # Example: SNAPCRAFT_IMAGE_INFO='{"build_url": "https://launchpad.net/~gohugoio/+snap/hugo-extended-dev/+build/344022"}'
-      export HUGO_BUILD_TAGS=""
-      if echo $SNAPCRAFT_IMAGE_INFO | grep -q '/+snap/hugo-extended'; then
-        HUGO_BUILD_TAGS="extended"
-      fi
-      echo " * Building hugo (HUGO_BUILD_TAGS=\"$HUGO_BUILD_TAGS\")..."
-      [ "$SNAPCRAFT_PROJECT_GRADE" = "stable" ] && mage -v hugoNoGitInfo || mage -v hugo
-      ./hugo version
-      ldd hugo || :
-
-      echo " * Building shell completion..."
-      ./hugo gen autocomplete --completionfile=hugo-completion
-
-      echo " * Installing to ${SNAPCRAFT_PART_INSTALL}..."
-      install -d $SNAPCRAFT_PART_INSTALL/bin
-      cp -av hugo $SNAPCRAFT_PART_INSTALL/bin/
-      mv -v hugo-completion $SNAPCRAFT_PART_INSTALL/
-
-      echo " * Stripping binary..."
-      ls -l $SNAPCRAFT_PART_INSTALL/bin/hugo
-      strip --remove-section=.comment --remove-section=.note $SNAPCRAFT_PART_INSTALL/bin/hugo
-      ls -l $SNAPCRAFT_PART_INSTALL/bin/hugo
+    stage-snaps:
+      - go/latest/stable
+    prime:
+      - bin/go
+      - pkg/tool
+      - -pkg/tool/*
 
   node:
     plugin: nil
-    stage-packages:
-      - nodejs
+    stage-snaps:
+      - node/24/stable
     organize:
-      usr/bin/: bin/
-      usr/lib/: lib/
-    prime:
-      - bin/node
-      - lib/*/lib*.so*
+      "LICENSE": "LICENSE_NODE"
+      "README.md": "README_NODE.md"
 
   pandoc:
     plugin: nil
     stage-packages:
-      - libatomic1
       - pandoc
-      - pandoc-data
+
+  rst2html:
+    plugin: nil
+    stage-packages:
+      - python3-docutils
+    override-build: |
+      set -ex
+      craftctl default
+      sed -i "s|'/usr/share/docutils/'|os.path.expandvars('\$SNAP/usr/share/docutils/')|" $CRAFT_PART_INSTALL/usr/lib/python3/dist-packages/docutils/__init__.py
     organize:
-      usr/bin/: bin/
-      usr/lib/: lib/
-    prime:
-      - bin/pandoc
+      usr/share/docutils/scripts/python3: usr/bin
+
+  hugo:
+    plugin: nil
+    source: .
+    after:
+      - git
+      - go
+    build-packages:
+      - git
+    override-pull: |
+      craftctl default
+      craftctl set version=$(git describe --tags --always --match 'v[0-9]*' | sed 's/^v//; s/-/+git/; s/-g/./')
+      if grep -q 'Suffix:\s*""' common/hugo/version_current.go; then
+        craftctl set grade=stable
+      else
+        craftctl set grade=devel
+      fi
+    override-build: |
+      set -ex
+      export GOPATH=$(realpath ../go)
+      export PATH=$GOPATH/bin:$PATH
+
+      echo "Building Hugo..."
+      CGO_ENABLED=0 go build -v -ldflags "-s -w -X github.com/gohugoio/hugo/common/hugo.vendorInfo=snap:$(craftctl get version)"
+
+      echo "Generating Shell Completion..."
+      ./hugo completion bash > hugo-completion
+
+      echo "Installing Binaries..."
+      install -d $CRAFT_PART_INSTALL/bin
+      cp -av hugo $CRAFT_PART_INSTALL/bin/
+      mv -v hugo-completion $CRAFT_PART_INSTALL/
+
+      echo "Stripping Binary..."
+      strip --remove-section=.comment --remove-section=.note $CRAFT_PART_INSTALL/bin/hugo

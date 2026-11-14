@@ -2,44 +2,93 @@
 # Twitter:      https://twitter.com/gohugoio
 # Website:      https://gohugo.io/
 
-FROM golang:1.16-alpine AS build
+ARG GO_VERSION="1.27"
+ARG ALPINE_VERSION="3.24"
+ARG DART_SASS_VERSION="1.79.3"
 
-# Optionally set HUGO_BUILD_TAGS to "extended" or "nodeploy" when building like so:
-#   docker build --build-arg HUGO_BUILD_TAGS=extended .
-ARG HUGO_BUILD_TAGS
+FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.5.0 AS xx
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS gobuild
+FROM golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS gorun
 
-ARG CGO=1
-ENV CGO_ENABLED=${CGO}
-ENV GOOS=linux
-ENV GO111MODULE=on
+
+FROM gobuild AS build
+
+# Set up cross-compilation helpers
+COPY --from=xx / /
+
+# Optionally set HUGO_BUILD_TAGS to "withdeploy" when building like so:
+# docker build --build-arg HUGO_BUILD_TAGS=withdeploy .
+ARG HUGO_BUILD_TAGS=""
+ENV CGO_ENABLED=0
+ENV GOPROXY=https://proxy.golang.org
+ENV GOCACHE=/root/.cache/go-build
+ENV GOMODCACHE=/go/pkg/mod
+ARG TARGETPLATFORM
 
 WORKDIR /go/src/github.com/gohugoio/hugo
 
-COPY . /go/src/github.com/gohugoio/hugo/
+# For  --mount=type=cache the value of target is the default cache id, so
+# for the go mod cache it would be good if we could share it with other Go images using the same setup,
+# but the go build cache needs to be per platform.
+# See this comment: https://github.com/moby/buildkit/issues/1706#issuecomment-702238282
+RUN --mount=target=. \
+    --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build,id=go-build-$TARGETPLATFORM <<EOT
+    set -ex
+    xx-go build -tags "$HUGO_BUILD_TAGS" -ldflags "-s -w -X github.com/gohugoio/hugo/common/hugo.vendorInfo=docker" -o /usr/bin/hugo
+    xx-verify /usr/bin/hugo
+EOT
 
-# gcc/g++ are required to build SASS libraries for extended version
-RUN apk update && \
-    apk add --no-cache gcc g++ musl-dev git && \
-    go get github.com/magefile/mage
+# dart-sass downloads the dart-sass runtime dependency
+FROM alpine:${ALPINE_VERSION} AS dart-sass
+ARG TARGETARCH
+ARG DART_SASS_VERSION
+ARG DART_ARCH=${TARGETARCH/amd64/x64}
+WORKDIR /out
+ADD https://github.com/sass/dart-sass/releases/download/${DART_SASS_VERSION}/dart-sass-${DART_SASS_VERSION}-linux-${DART_ARCH}.tar.gz .
+RUN tar -xf dart-sass-${DART_SASS_VERSION}-linux-${DART_ARCH}.tar.gz
 
-RUN mage hugo && mage install
+FROM gorun AS final
 
-# ---
+COPY --from=build /usr/bin/hugo /usr/bin/hugo
 
-FROM alpine:3.12
+# libc6-compat is required by the glibc built Dart Sass binary.
+RUN apk add --no-cache \
+    libc6-compat \
+    git \
+    runuser \
+    nodejs \
+    npm \
+    openssh-client \
+    tar
 
-COPY --from=build /go/bin/hugo /usr/bin/hugo
+RUN mkdir -p /var/hugo/bin /cache && \
+    addgroup -Sg 1000 hugo && \
+    adduser -Sg hugo -u 1000 -h /var/hugo hugo && \
+    chown -R hugo: /var/hugo /cache && \
+    # For the Hugo's Git integration to work.
+    runuser -u hugo -- git config --global --add safe.directory /project && \
+    # See https://github.com/gohugoio/hugo/issues/9810
+    runuser -u hugo -- git config --global core.quotepath false
 
-# libc6-compat & libstdc++ are required for extended SASS libraries
-# ca-certificates are required to fetch outside resources (like Twitter oEmbeds)
-RUN apk update && \
-    apk add --no-cache ca-certificates libc6-compat libstdc++ git
+USER hugo:hugo
+VOLUME /project
+WORKDIR /project
+ENV HUGO_CACHEDIR=/cache
+ENV PATH="/var/hugo/bin:$PATH"
 
-VOLUME /site
-WORKDIR /site
+COPY scripts/docker/entrypoint.sh /entrypoint.sh
+COPY --from=dart-sass /out/dart-sass /var/hugo/bin/dart-sass
+
+# Update PATH to reflect the new dependencies.
+# For more complex setups, we should probably find a way to
+# delegate this to the script itself, but this will have to do for now.
+# Also, the dart-sass binary is a little special, other binaries can be put/linked
+# directly in /var/hugo/bin.
+ENV PATH="/var/hugo/bin/dart-sass:$PATH"
 
 # Expose port for live server
 EXPOSE 1313
 
-ENTRYPOINT ["hugo"]
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["--help"]

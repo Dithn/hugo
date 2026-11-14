@@ -1,0 +1,19 @@
+---
+title: UnixNano
+description: Returns the given time.Time value expressed as the number of nanoseconds elapsed since January 1, 1970 UTC.
+categories: []
+keywords: []
+params:
+  functions_and_methods:
+    returnType: int64
+    signatures: [TIME.UnixNano]
+---
+
+See [Unix epoch][].
+
+```go-html-template
+{{ $t := time.AsTime "2023-01-27T23:44:58-08:00" }}
+{{ $t.UnixNano }} → 1674891898000000000
+```
+
+[Unix epoch]: https://en.wikipedia.org/wiki/Unix_time

@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build go1.13
-
 package template_test
 
 import (
@@ -101,7 +99,7 @@ func Example_autoescaping() {
 
 func Example_escape() {
 	const s = `"Fran & Freddie's Diner" <tasty@example.com>`
-	v := []interface{}{`"Fran & Freddie's Diner"`, ' ', `<tasty@example.com>`}
+	v := []any{`"Fran & Freddie's Diner"`, ' ', `<tasty@example.com>`}
 
 	fmt.Println(template.HTMLEscapeString(s))
 	template.HTMLEscape(os.Stdout, []byte(s))

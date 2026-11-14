@@ -1,4 +1,4 @@
-// Copyright 2017 The Hugo Authors. All rights reserved.
+// Copyright 2026 The Hugo Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,6 +14,8 @@
 package crypto
 
 import (
+	"context"
+
 	"github.com/gohugoio/hugo/deps"
 	"github.com/gohugoio/hugo/tpl/internal"
 )
@@ -26,8 +28,15 @@ func init() {
 
 		ns := &internal.TemplateFuncsNamespace{
 			Name:    name,
-			Context: func(args ...interface{}) (interface{}, error) { return ctx, nil },
+			Context: func(cctx context.Context, args ...any) (any, error) { return ctx, nil },
 		}
+
+		ns.AddMethodMapping(ctx.HMAC,
+			[]string{"hmac"},
+			[][2]string{
+				{`{{ hmac "sha256" "Secret key" "Hello world, gophers!" }}`, `b6d11b6c53830b9d87036272ca9fe9d19306b8f9d8aa07b15da27d89e6e34f40`},
+			},
+		)
 
 		ns.AddMethodMapping(ctx.MD5,
 			[]string{"md5"},
@@ -51,10 +60,13 @@ func init() {
 			},
 		)
 
-		ns.AddMethodMapping(ctx.HMAC,
-			[]string{"hmac"},
+		ns.AddMethodMapping(ctx.Hash,
+			nil,
 			[][2]string{
-				{`{{ hmac "sha256" "Secret key" "Hello world, gophers!" }}`, `b6d11b6c53830b9d87036272ca9fe9d19306b8f9d8aa07b15da27d89e6e34f40`},
+				{`{{ crypto.Hash "sha256" "Hello world, gophers!" }}`, `6ec43b78da9669f50e4e422575c54bf87536954ccd58280219c393f2ce352b46`},
+				{`{{ "Hello world" | crypto.Hash "sha256" }}`, `64ec88ca00b268e5ba1a35678a1b5316d212f4f366b2477232534a8aeca37f3c`},
+				{`{{ "Hello world" | crypto.Hash }}`, `64ec88ca00b268e5ba1a35678a1b5316d212f4f366b2477232534a8aeca37f3c`},
+				{`{{ "Hello world" | crypto.Hash "sha512" }}`, `b7f783baed8297f0db917462184ff4f08e69c2d5e5f79a942600f9725f58ce1f29c18139bf80b06c0fff2bdd34738452ecf40c488c22a7e3d80cdf6f9c1c0d47`},
 			},
 		)
 

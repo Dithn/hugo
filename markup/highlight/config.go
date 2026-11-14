@@ -16,14 +16,24 @@ package highlight
 
 import (
 	"fmt"
+	gohtml "html"
 	"strconv"
 	"strings"
 
-	"github.com/alecthomas/chroma/formatters/html"
+	"github.com/alecthomas/chroma/v2/formatters/html"
+	"github.com/spf13/cast"
 
 	"github.com/gohugoio/hugo/config"
+	"github.com/gohugoio/hugo/markup/converter/hooks"
 
 	"github.com/mitchellh/mapstructure"
+)
+
+const (
+	lineanchorsKey = "lineanchors"
+	lineNosKey     = "linenos"
+	hlLinesKey     = "hl_lines"
+	linosStartKey  = "linenostart"
 )
 
 var DefaultConfig = Config{
@@ -35,19 +45,23 @@ var DefaultConfig = Config{
 	NoClasses:          true,
 	LineNumbersInTable: true,
 	TabWidth:           4,
+	WrapperClass:       "highlight",
 }
 
-//
 type Config struct {
 	Style string
 
+	// Enable syntax highlighting of fenced code blocks.
 	CodeFences bool
+
+	// The class or classes to use for the outermost element of the highlighted code.
+	WrapperClass string
 
 	// Use inline CSS styles.
 	NoClasses bool
 
 	// When set, line numbers will be printed.
-	LineNos            bool
+	LineNos            any
 	LineNumbersInTable bool
 
 	// When set, add links to line numbers
@@ -60,42 +74,140 @@ type Config struct {
 	// A space separated list of line numbers, e.g. “3-8 10-20”.
 	Hl_Lines string
 
+	// If set, the markup will not be wrapped in any container.
+	Hl_inline bool
+
+	// A parsed and ready to use list of line ranges.
+	HL_lines_parsed [][2]int `json:"-"`
+
 	// TabWidth sets the number of characters for a tab. Defaults to 4.
 	TabWidth int
 
 	GuessSyntax bool
 }
 
-func (cfg Config) ToHTMLOptions() []html.Option {
-	var lineAnchors string
+const errLineNosMsg = `lineNos must be one of true, false, "inline", or "table"; got %[1]v (%[1]T)`
+
+func (cfg Config) toHTMLOptions() ([]html.Option, error) {
+	var (
+		lineAnchors string
+		lineNos     bool
+		inTable     = cfg.LineNumbersInTable
+	)
+
 	if cfg.LineAnchors != "" {
-		lineAnchors = cfg.LineAnchors + "-"
-	}
-	options := []html.Option{
-		html.TabWidth(cfg.TabWidth),
-		html.WithLineNumbers(cfg.LineNos),
-		html.BaseLineNumber(cfg.LineNoStart),
-		html.LineNumbersInTable(cfg.LineNumbersInTable),
-		html.WithClasses(!cfg.NoClasses),
-		html.LinkableLineNumbers(cfg.AnchorLineNos, lineAnchors),
+		// Chroma writes this verbatim into id and href attributes.
+		lineAnchors = gohtml.EscapeString(cfg.LineAnchors) + "-"
 	}
 
-	if cfg.Hl_Lines != "" {
-		ranges, err := hlLinesToRanges(cfg.LineNoStart, cfg.Hl_Lines)
-		if err == nil {
+	switch v := cfg.LineNos.(type) {
+	case string:
+		switch v {
+		case "inline":
+			lineNos = true
+			inTable = false
+		case "table":
+			lineNos = true
+			inTable = true
+		default:
+			return nil, fmt.Errorf(errLineNosMsg, v)
+		}
+	case bool:
+		lineNos = v
+	case nil:
+		lineNos = false
+	default:
+		return nil, fmt.Errorf(errLineNosMsg, v)
+	}
+
+	options := []html.Option{
+		html.TabWidth(cfg.TabWidth),
+		html.WithLineNumbers(lineNos),
+		html.BaseLineNumber(cfg.LineNoStart),
+		html.LineNumbersInTable(inTable),
+		html.WithClasses(!cfg.NoClasses),
+		html.WithLinkableLineNumbers(cfg.AnchorLineNos, lineAnchors),
+		html.InlineCode(cfg.Hl_inline),
+	}
+
+	if cfg.Hl_Lines != "" || cfg.HL_lines_parsed != nil {
+		var ranges [][2]int
+		if cfg.HL_lines_parsed != nil {
+			ranges = cfg.HL_lines_parsed
+		} else {
+			var err error
+			ranges, err = hlLinesToRanges(cfg.LineNoStart, cfg.Hl_Lines)
+			if err != nil {
+				ranges = nil
+			}
+		}
+
+		if ranges != nil {
 			options = append(options, html.HighlightLines(ranges))
 		}
 	}
 
-	return options
+	return options, nil
 }
 
 func applyOptionsFromString(opts string, cfg *Config) error {
-	optsm, err := parseOptions(opts)
+	optsm, err := parseHighlightOptions(opts)
 	if err != nil {
 		return err
 	}
 	return mapstructure.WeakDecode(optsm, cfg)
+}
+
+func applyOptionsFromMap(optsm map[string]any, cfg *Config) error {
+	normalizeHighlightOptions(optsm)
+	return mapstructure.WeakDecode(optsm, cfg)
+}
+
+// applyOptions applies opts (a string or a map) to cfg. The type and code
+// options, if set, are not part of Config and instead override lang and code
+// respectively. Shared by Highlight and HighlightCodeBlock. See issue 11872.
+func applyOptions(opts any, cfg *Config, lang, code *string) error {
+	if opts == nil {
+		return nil
+	}
+
+	var optsm map[string]any
+	switch vv := opts.(type) {
+	case map[string]any:
+		optsm = make(map[string]any, len(vv))
+		for k, v := range vv {
+			optsm[strings.ToLower(k)] = v
+		}
+	default:
+		s, err := cast.ToStringE(opts)
+		if err != nil {
+			return err
+		}
+		if optsm, err = parseHighlightOptions(s); err != nil {
+			return err
+		}
+	}
+
+	if v, found := optsm["type"]; found {
+		*lang = cast.ToString(v)
+		delete(optsm, "type")
+	}
+	if v, found := optsm["code"]; found {
+		*code = cast.ToString(v)
+		delete(optsm, "code")
+	}
+
+	return applyOptionsFromMap(optsm, cfg)
+}
+
+func applyOptionsFromCodeBlockContext(ctx hooks.CodeblockContext, cfg *Config) error {
+	if cfg.LineAnchors == "" {
+		const lineAnchorPrefix = "hl-"
+		// Set it to the ordinal with a prefix.
+		cfg.LineAnchors = fmt.Sprintf("%s%d", lineAnchorPrefix, ctx.Ordinal())
+	}
+
+	return nil
 }
 
 // ApplyLegacyConfig applies legacy config from back when we had
@@ -128,31 +240,65 @@ func ApplyLegacyConfig(cfg config.Provider, conf *Config) error {
 	return nil
 }
 
-func parseOptions(in string) (map[string]interface{}, error) {
+func parseHighlightOptions(in string) (map[string]any, error) {
 	in = strings.Trim(in, " ")
-	opts := make(map[string]interface{})
+	opts := make(map[string]any)
 
 	if in == "" {
 		return opts, nil
 	}
 
-	for _, v := range strings.Split(in, ",") {
+	for v := range strings.SplitSeq(in, ",") {
 		keyVal := strings.Split(v, "=")
-		key := strings.ToLower(strings.Trim(keyVal[0], " "))
+		key := strings.Trim(keyVal[0], " ")
 		if len(keyVal) != 2 {
 			return opts, fmt.Errorf("invalid Highlight option: %s", key)
 		}
-		if key == "linenos" {
-			opts[key] = keyVal[1] != "false"
-			if keyVal[1] == "table" || keyVal[1] == "inline" {
-				opts["lineNumbersInTable"] = keyVal[1] == "table"
-			}
-		} else {
-			opts[key] = keyVal[1]
-		}
+		opts[key] = keyVal[1]
+
 	}
 
+	normalizeHighlightOptions(opts)
+
 	return opts, nil
+}
+
+func normalizeHighlightOptions(m map[string]any) {
+	if m == nil {
+		return
+	}
+
+	// lowercase all keys
+	for k, v := range m {
+		delete(m, k)
+		m[strings.ToLower(k)] = v
+	}
+
+	baseLineNumber := 1
+	if v, ok := m[linosStartKey]; ok {
+		baseLineNumber = cast.ToInt(v)
+	}
+
+	for k, v := range m {
+		switch k {
+		case lineNosKey:
+			if v == "table" || v == "inline" {
+				m["lineNumbersInTable"] = v == "table"
+			}
+			if vs, ok := v.(string); ok {
+				m[k] = vs != "false"
+			}
+		case hlLinesKey:
+			if hlRanges, ok := v.([][2]int); ok {
+				for i := range hlRanges {
+					hlRanges[i][0] += baseLineNumber
+					hlRanges[i][1] += baseLineNumber
+				}
+				delete(m, k)
+				m[k+"_parsed"] = hlRanges
+			}
+		}
+	}
 }
 
 // startLine compensates for https://github.com/alecthomas/chroma/issues/30
@@ -170,8 +316,8 @@ func hlLinesToRanges(startLine int, s string) ([][2]int, error) {
 	// 1-2 3
 	// 1 3-4
 	// 1    3-4
-	fields := strings.Split(s, " ")
-	for _, field := range fields {
+	fields := strings.SplitSeq(s, " ")
+	for field := range fields {
 		field = strings.TrimSpace(field)
 		if field == "" {
 			continue

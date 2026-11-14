@@ -1,20 +1,8 @@
 ---
 title: About Hugo
-linktitle: Overview
-description: Hugo's features, roadmap, license, and motivation.
-date: 2017-02-01
-publishdate: 2017-02-01
-lastmod: 2017-02-01
+linkTitle: About
+description: Learn about Hugo and its features, privacy protections, and security model.
 categories: []
 keywords: []
-menu:
-  docs:
-    parent: "about"
-    weight: 1
-weight: 1
-draft: false
-aliases: [/about-hugo/,/docs/]
-toc: false
+weight: 7
 ---
-
-Hugo is not your average static site generator.

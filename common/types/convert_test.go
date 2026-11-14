@@ -26,7 +26,7 @@ func TestToStringSlicePreserveString(t *testing.T) {
 
 	c.Assert(ToStringSlicePreserveString("Hugo"), qt.DeepEquals, []string{"Hugo"})
 	c.Assert(ToStringSlicePreserveString(qt.Commentf("Hugo")), qt.DeepEquals, []string{"Hugo"})
-	c.Assert(ToStringSlicePreserveString([]interface{}{"A", "B"}), qt.DeepEquals, []string{"A", "B"})
+	c.Assert(ToStringSlicePreserveString([]any{"A", "B"}), qt.DeepEquals, []string{"A", "B"})
 	c.Assert(ToStringSlicePreserveString([]int{1, 3}), qt.DeepEquals, []string{"1", "3"})
 	c.Assert(ToStringSlicePreserveString(nil), qt.IsNil)
 }
@@ -45,5 +45,4 @@ func TestToDuration(t *testing.T) {
 	c.Assert(ToDuration("200"), qt.Equals, 200*time.Millisecond)
 	c.Assert(ToDuration("4m"), qt.Equals, 4*time.Minute)
 	c.Assert(ToDuration("asdfadf"), qt.Equals, time.Duration(0))
-
 }

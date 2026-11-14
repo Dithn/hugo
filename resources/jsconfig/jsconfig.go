@@ -16,65 +16,57 @@ package jsconfig
 import (
 	"path/filepath"
 	"sort"
-	"sync"
+
+	"github.com/bep/helpers/maphelpers"
 )
 
 // Builder builds a jsconfig.json file that, currently, is used only to assist
-// intellinsense in editors.
+// IntelliSense in editors.
 type Builder struct {
-	sourceRootsMu sync.RWMutex
-	sourceRoots   map[string]bool
+	sourceRoots *maphelpers.ConcurrentSet[string]
 }
 
 // NewBuilder creates a new Builder.
 func NewBuilder() *Builder {
-	return &Builder{sourceRoots: make(map[string]bool)}
+	return &Builder{sourceRoots: maphelpers.NewConcurrentSet[string]()}
 }
 
 // Build builds a new Config with paths relative to dir.
 // This method is thread safe.
 func (b *Builder) Build(dir string) *Config {
-	b.sourceRootsMu.RLock()
-	defer b.sourceRootsMu.RUnlock()
-
-	if len(b.sourceRoots) == 0 {
+	if b.sourceRoots.Len() == 0 {
 		return nil
 	}
-	conf := newJSConfig()
-
 	var roots []string
-	for root := range b.sourceRoots {
+	for root := range b.sourceRoots.All() {
+		if root == dir {
+			// We need mappings for other source roots (e.g. mounted modules), but not for the current one.
+			// See issue 15169.
+			continue
+		}
 		rel, err := filepath.Rel(dir, filepath.Join(root, "*"))
 		if err == nil {
 			roots = append(roots, rel)
 		}
 	}
+	if len(roots) == 0 {
+		return nil
+	}
 	sort.Strings(roots)
+	conf := newJSConfig()
 	conf.CompilerOptions.Paths["*"] = roots
-
 	return conf
 }
 
 // AddSourceRoot adds a new source root.
 // This method is thread safe.
 func (b *Builder) AddSourceRoot(root string) {
-	b.sourceRootsMu.RLock()
-	found := b.sourceRoots[root]
-	b.sourceRootsMu.RUnlock()
-
-	if found {
-		return
-	}
-
-	b.sourceRootsMu.Lock()
-	b.sourceRoots[root] = true
-	b.sourceRootsMu.Unlock()
+	b.sourceRoots.AddIfAbsent(root)
 }
 
 // CompilerOptions holds compilerOptions for jsonconfig.json.
 type CompilerOptions struct {
-	BaseURL string              `json:"baseUrl"`
-	Paths   map[string][]string `json:"paths"`
+	Paths map[string][]string `json:"paths"`
 }
 
 // Config holds the data for jsconfig.json.
@@ -85,8 +77,7 @@ type Config struct {
 func newJSConfig() *Config {
 	return &Config{
 		CompilerOptions: CompilerOptions{
-			BaseURL: ".",
-			Paths:   make(map[string][]string),
+			Paths: make(map[string][]string),
 		},
 	}
 }

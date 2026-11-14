@@ -11,15 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package transform
+package transform_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strings"
 	"testing"
 
-	"github.com/gohugoio/hugo/config"
+	"github.com/gohugoio/hugo/hugolib"
+	"github.com/gohugoio/hugo/tpl/transform"
 
 	"github.com/gohugoio/hugo/common/hugio"
 	"github.com/gohugoio/hugo/resources/resource"
@@ -80,116 +82,128 @@ func (t testContentResource) Key() string {
 }
 
 func TestUnmarshal(t *testing.T) {
-	v := config.New()
-	ns := New(newDeps(v))
-	c := qt.New(t)
+	b := hugolib.Test(t, "")
 
-	assertSlogan := func(m map[string]interface{}) {
-		c.Assert(m["slogan"], qt.Equals, "Hugo Rocks!")
+	ns := transform.New(b.H.Deps)
+
+	assertSlogan := func(m map[string]any) {
+		b.Assert(m["slogan"], qt.Equals, "Hugo Rocks!")
 	}
 
 	for _, test := range []struct {
-		data    interface{}
-		options interface{}
-		expect  interface{}
+		data    any
+		options any
+		expect  any
 	}{
-		{`{ "slogan": "Hugo Rocks!" }`, nil, func(m map[string]interface{}) {
+		{`{ "slogan": "Hugo Rocks!" }`, nil, func(m map[string]any) {
 			assertSlogan(m)
 		}},
-		{`slogan: "Hugo Rocks!"`, nil, func(m map[string]interface{}) {
+		{`slogan: "Hugo Rocks!"`, nil, func(m map[string]any) {
 			assertSlogan(m)
 		}},
-		{`slogan = "Hugo Rocks!"`, nil, func(m map[string]interface{}) {
+		{`slogan = "Hugo Rocks!"`, nil, func(m map[string]any) {
 			assertSlogan(m)
 		}},
-		{testContentResource{key: "r1", content: `slogan: "Hugo Rocks!"`, mime: media.YAMLType}, nil, func(m map[string]interface{}) {
+		{testContentResource{key: "r1", content: `slogan: "Hugo Rocks!"`, mime: media.Builtin.YAMLType}, nil, func(m map[string]any) {
 			assertSlogan(m)
 		}},
-		{testContentResource{key: "r1", content: `{ "slogan": "Hugo Rocks!" }`, mime: media.JSONType}, nil, func(m map[string]interface{}) {
+		{testContentResource{key: "r1", content: `{ "slogan": "Hugo Rocks!" }`, mime: media.Builtin.JSONType}, nil, func(m map[string]any) {
 			assertSlogan(m)
 		}},
-		{testContentResource{key: "r1", content: `slogan = "Hugo Rocks!"`, mime: media.TOMLType}, nil, func(m map[string]interface{}) {
+		{testContentResource{key: "r1", content: `slogan = "Hugo Rocks!"`, mime: media.Builtin.TOMLType}, nil, func(m map[string]any) {
 			assertSlogan(m)
 		}},
-		{testContentResource{key: "r1", content: `<root><slogan>Hugo Rocks!</slogan></root>"`, mime: media.XMLType}, nil, func(m map[string]interface{}) {
+		{testContentResource{key: "r1", content: `<root><slogan>Hugo Rocks!</slogan></root>"`, mime: media.Builtin.XMLType}, nil, func(m map[string]any) {
 			assertSlogan(m)
 		}},
 		{testContentResource{key: "r1", content: `1997,Ford,E350,"ac, abs, moon",3000.00
-1999,Chevy,"Venture ""Extended Edition""","",4900.00`, mime: media.CSVType}, nil, func(r [][]string) {
-			c.Assert(len(r), qt.Equals, 2)
+1999,Chevy,"Venture ""Extended Edition""","",4900.00`, mime: media.Builtin.CSVType}, nil, func(r [][]string) {
+			b.Assert(len(r), qt.Equals, 2)
 			first := r[0]
-			c.Assert(len(first), qt.Equals, 5)
-			c.Assert(first[1], qt.Equals, "Ford")
+			b.Assert(len(first), qt.Equals, 5)
+			b.Assert(first[1], qt.Equals, "Ford")
 		}},
-		{testContentResource{key: "r1", content: `a;b;c`, mime: media.CSVType}, map[string]interface{}{"delimiter": ";"}, func(r [][]string) {
-			c.Assert([][]string{{"a", "b", "c"}}, qt.DeepEquals, r)
+		{testContentResource{key: "r1", content: `a;b;c`, mime: media.Builtin.CSVType}, map[string]any{"delimiter": ";"}, func(r [][]string) {
+			b.Assert([][]string{{"a", "b", "c"}}, qt.DeepEquals, r)
+		}},
+		{testContentResource{key: "r1", content: `{p: [a, b]}`, mime: media.Builtin.JSONType}, map[string]any{"format": "yaml"}, func(m map[string]any) {
+			b.Assert(m, qt.DeepEquals, map[string]any{"p": []any{"a", "b"}})
 		}},
 		{"a,b,c", nil, func(r [][]string) {
-			c.Assert([][]string{{"a", "b", "c"}}, qt.DeepEquals, r)
+			b.Assert([][]string{{"a", "b", "c"}}, qt.DeepEquals, r)
 		}},
-		{"a;b;c", map[string]interface{}{"delimiter": ";"}, func(r [][]string) {
-			c.Assert([][]string{{"a", "b", "c"}}, qt.DeepEquals, r)
+		{"a;b;c", map[string]any{"delimiter": ";"}, func(r [][]string) {
+			b.Assert([][]string{{"a", "b", "c"}}, qt.DeepEquals, r)
 		}},
 		{testContentResource{key: "r1", content: `
 % This is a comment
-a;b;c`, mime: media.CSVType}, map[string]interface{}{"DElimiter": ";", "Comment": "%"}, func(r [][]string) {
-			c.Assert([][]string{{"a", "b", "c"}}, qt.DeepEquals, r)
+a;b;c`, mime: media.Builtin.CSVType}, map[string]any{"DElimiter": ";", "Comment": "%"}, func(r [][]string) {
+			b.Assert([][]string{{"a", "b", "c"}}, qt.DeepEquals, r)
+		}},
+		{``, nil, nil},
+		{`   `, nil, nil},
+		{`{p: [a, b]}`, map[string]any{"format": "yaml"}, func(m map[string]any) {
+			b.Assert(m, qt.DeepEquals, map[string]any{"p": []any{"a", "b"}})
 		}},
 		// errors
 		{"thisisnotavaliddataformat", nil, false},
-		{testContentResource{key: "r1", content: `invalid&toml"`, mime: media.TOMLType}, nil, false},
-		{testContentResource{key: "r1", content: `unsupported: MIME"`, mime: media.CalendarType}, nil, false},
+		{testContentResource{key: "r1", content: `invalid&toml"`, mime: media.Builtin.TOMLType}, nil, false},
+		{testContentResource{key: "r1", content: `unsupported: MIME"`, mime: media.Builtin.CalendarType}, nil, false},
 		{"thisisnotavaliddataformat", nil, false},
 		{`{ notjson }`, nil, false},
 		{tstNoStringer{}, nil, false},
+		{"<root><a>notjson</a></root>", map[string]any{"format": "json"}, false},
+		{"anything", map[string]any{"format": "invalidformat"}, false},
 	} {
 
-		ns.cache.Clear()
+		ns.Reset()
 
-		var args []interface{}
+		var args []any
 
 		if test.options != nil {
-			args = []interface{}{test.options, test.data}
+			args = []any{test.options, test.data}
 		} else {
-			args = []interface{}{test.data}
+			args = []any{test.data}
 		}
 
 		result, err := ns.Unmarshal(args...)
 
-		if b, ok := test.expect.(bool); ok && !b {
-			c.Assert(err, qt.Not(qt.IsNil))
-		} else if fn, ok := test.expect.(func(m map[string]interface{})); ok {
-			c.Assert(err, qt.IsNil)
-			m, ok := result.(map[string]interface{})
-			c.Assert(ok, qt.Equals, true)
+		if bb, ok := test.expect.(bool); ok && !bb {
+			b.Assert(err, qt.Not(qt.IsNil))
+		} else if fn, ok := test.expect.(func(m map[string]any)); ok {
+			b.Assert(err, qt.IsNil)
+			m, ok := result.(map[string]any)
+			b.Assert(ok, qt.Equals, true)
 			fn(m)
 		} else if fn, ok := test.expect.(func(r [][]string)); ok {
-			c.Assert(err, qt.IsNil)
+			b.Assert(err, qt.IsNil)
 			r, ok := result.([][]string)
-			c.Assert(ok, qt.Equals, true)
+			b.Assert(ok, qt.Equals, true)
 			fn(r)
 		} else {
-			c.Assert(err, qt.IsNil)
-			c.Assert(result, qt.Equals, test.expect)
+			b.Assert(err, qt.IsNil)
+			b.Assert(result, qt.Equals, test.expect)
 		}
 
 	}
 }
 
 func BenchmarkUnmarshalString(b *testing.B) {
-	v := config.New()
-	ns := New(newDeps(v))
+	bb := hugolib.Test(b, "")
+
+	ns := transform.New(bb.H.Deps)
 
 	const numJsons = 100
 
 	var jsons [numJsons]string
-	for i := 0; i < numJsons; i++ {
+	for i := range numJsons {
 		jsons[i] = strings.Replace(testJSON, "ROOT_KEY", fmt.Sprintf("root%d", i), 1)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		result, err := ns.Unmarshal(jsons[rand.Intn(numJsons)])
+	ctx := context.Background()
+
+	for b.Loop() {
+		result, err := ns.Unmarshal(ctx, jsons[rand.Intn(numJsons)])
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -200,20 +214,22 @@ func BenchmarkUnmarshalString(b *testing.B) {
 }
 
 func BenchmarkUnmarshalResource(b *testing.B) {
-	v := config.New()
-	ns := New(newDeps(v))
+	bb := hugolib.Test(b, "")
+
+	ns := transform.New(bb.H.Deps)
 
 	const numJsons = 100
 
 	var jsons [numJsons]testContentResource
-	for i := 0; i < numJsons; i++ {
+	for i := range numJsons {
 		key := fmt.Sprintf("root%d", i)
-		jsons[i] = testContentResource{key: key, content: strings.Replace(testJSON, "ROOT_KEY", key, 1), mime: media.JSONType}
+		jsons[i] = testContentResource{key: key, content: strings.Replace(testJSON, "ROOT_KEY", key, 1), mime: media.Builtin.JSONType}
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		result, err := ns.Unmarshal(jsons[rand.Intn(numJsons)])
+	ctx := context.Background()
+
+	for b.Loop() {
+		result, err := ns.Unmarshal(ctx, jsons[rand.Intn(numJsons)])
 		if err != nil {
 			b.Fatal(err)
 		}

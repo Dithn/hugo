@@ -1,0 +1,502 @@
+// Copyright 2024 The Hugo Authors. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package codeblocks_test
+
+import (
+	"path/filepath"
+	"strings"
+	"testing"
+
+	qt "github.com/frankban/quicktest"
+
+	"github.com/gohugoio/hugo/hugolib"
+)
+
+func TestCodeblocks(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+[markup]
+  [markup.highlight]
+    anchorLineNos = false
+    codeFences = true
+    guessSyntax = false
+    hl_Lines = ''
+    lineAnchors = ''
+    lineNoStart = 1
+    lineNos = false
+    lineNumbersInTable = true
+    noClasses = false
+    style = 'monokai'
+    tabWidth = 4
+-- layouts/_markup/render-codeblock-goat.html --
+{{ $diagram := diagrams.Goat .Inner }}
+Goat SVG:{{ substr $diagram.Wrapped 0 100 | safeHTML }}  }}|
+Goat Attribute: {{ .Attributes.width}}|
+-- layouts/_markup/render-codeblock-go.html --
+Go Code: {{ .Inner | safeHTML }}|
+Go Language: {{ .Type }}|
+-- layouts/single.html --
+{{ .Content }}
+-- content/p1.md --
+---
+title: "p1"
+---
+
+## Ascii Diagram
+
+§§§goat { width="600" }
+--->
+§§§
+
+## Go Code
+
+§§§go
+fmt.Println("Hello, World!");
+§§§
+
+## Golang Code
+
+§§§go
+fmt.Println("Hello, Golang!");
+§§§
+
+## Bash Code
+
+§§§bash { linenos=inline,hl_lines=[2,"5-6"],linenostart=32 class=blue }
+echo "l1";
+echo "l2";
+echo "l3";
+echo "l4";
+echo "l5";
+echo "l6";
+echo "l7";
+echo "l8";
+§§§
+`
+
+	for range 6 {
+
+		b := hugolib.Test(t, files)
+
+		b.AssertFileContent("public/p1/index.html", `
+Goat SVG:<svg class='diagram'
+Goat Attribute: 600|
+
+Go Language: go|
+Go Code: fmt.Println("Hello, World!");
+
+Go Code: fmt.Println("Hello, Golang!");
+Go Language: go|
+
+
+	`,
+			"Goat SVG:<svg class='diagram' xmlns='http://www.w3.org/2000/svg' version='1.1' height='25' width='40'",
+			"Goat Attribute: 600|",
+			"<h2 id=\"go-code\">Go Code</h2>\nGo Code: fmt.Println(\"Hello, World!\");\n|\nGo Language: go|",
+			"<h2 id=\"golang-code\">Golang Code</h2>\nGo Code: fmt.Println(\"Hello, Golang!\");\n|\nGo Language: go|",
+			"<h2 id=\"bash-code\">Bash Code</h2>\n<div class=\"highlight blue\"><pre tabindex=\"0\" class=\"chroma\"><code class=\"language-bash\" data-lang=\"bash\"><span class=\"line\"><span class=\"ln\">32</span><span class=\"cl\"><span class=\"nb\">echo</span> <span class=\"s2\">&#34;l1&#34;</span><span class=\"p\">;</span>\n</span></span><span class=\"line hl\"><span class=\"ln\">33</span>",
+		)
+	}
+}
+
+func TestHighlightCodeblock(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+[markup]
+[markup.highlight]
+anchorLineNos = false
+codeFences = true
+guessSyntax = false
+hl_Lines = ''
+lineAnchors = ''
+lineNoStart = 1
+lineNos = false
+lineNumbersInTable = true
+noClasses = false
+style = 'monokai'
+tabWidth = 4
+-- layouts/_markup/render-codeblock.html --
+{{ $result := transform.HighlightCodeBlock . }}
+Inner: |{{ $result.Inner | safeHTML }}|
+Wrapped: |{{ $result.Wrapped | safeHTML }}|
+-- layouts/single.html --
+{{ .Content }}
+-- content/p1.md --
+---
+title: "p1"
+---
+
+## Go Code
+
+§§§go
+fmt.Println("Hello, World!");
+§§§
+
+## Plain Code
+
+§§§
+plain <code> & text
+§§§
+
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/p1/index.html",
+		"Inner: |<span class=\"line\"><span class=\"cl\"><span class=\"nx\">fmt</span><span class=\"p\">.</span><span class=\"nf\">Println</span><span class=\"p\">(</span><span class=\"s\">&#34;Hello, World!&#34;</span><span class=\"p\">);</span></span></span>|",
+		"Wrapped: |<div class=\"highlight\"><pre tabindex=\"0\" class=\"chroma\"><code class=\"language-go\" data-lang=\"go\"><span class=\"line\"><span class=\"cl\"><span class=\"nx\">fmt</span><span class=\"p\">.</span><span class=\"nf\">Println</span><span class=\"p\">(</span><span class=\"s\">&#34;Hello, World!&#34;</span><span class=\"p\">);</span></span></span></code></pre></div>|",
+		"Inner: |plain &lt;code&gt; &amp; text|",
+		"Wrapped: |<pre tabindex=\"0\"><code>plain &lt;code&gt; &amp; text</code></pre>|",
+	)
+}
+
+func TestCodeblocksBugs(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+-- layouts/_markup/render-codeblock.html --
+{{ .Position | safeHTML }}
+-- layouts/single.html --
+{{ .Content }}
+-- content/p1.md --
+---
+title: "p1"
+---
+
+## Issue 9627
+
+§§§text
+{{</* foo */>}}
+§§§
+
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/p1/index.html",
+		"p1.md:7:1",
+	)
+}
+
+func TestCodeChomp(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+-- content/p1.md --
+---
+title: "p1"
+---
+
+§§§bash
+echo "p1";
+§§§
+-- layouts/single.html --
+{{ .Content }}
+-- layouts/_markup/render-codeblock.html --
+|{{ .Inner | safeHTML }}|
+
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/p1/index.html", "|echo \"p1\";|")
+}
+
+func TestCodePosition(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+-- content/p1.md --
+---
+title: "p1"
+---
+
+##   Code
+
+§§§
+echo "p1";
+§§§
+-- layouts/single.html --
+{{ .Content }}
+-- layouts/_markup/render-codeblock.html --
+Position: {{ .Position | safeHTML }}
+
+
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/p1/index.html", filepath.FromSlash("Position: \"/content/p1.md:7:1\""))
+}
+
+// Issue 10118
+func TestAttributes(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+-- content/p1.md --
+---
+title: "p1"
+---
+
+## Issue 10118
+
+§§§ {foo="bar"}
+Hello, World!
+§§§
+
+-- layouts/single.html --
+{{ .Content }}
+-- layouts/_markup/render-codeblock.html --
+Attributes: {{ .Attributes }}|Type: {{ .Type }}|
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/p1/index.html", "<h2 id=\"issue-10118\">Issue 10118</h2>\nAttributes: map[foo:bar]|Type: |")
+}
+
+// Issue 9571
+// Issue 14909
+func TestAttributesChroma(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+-- content/p1.md --
+---
+title: "p1"
+---
+
+##   Code
+
+§§§LANGUAGE {style=monokai class=my-class tabWidth=8}
+echo "p1";
+§§§
+-- layouts/single.html --
+{{ .Content }}
+-- layouts/_markup/render-codeblock.html --
+Attributes: {{ .Attributes }}|Options: {{ .Options }}|
+
+
+`
+	testLanguage := func(language, expect string) {
+		b := hugolib.Test(t, strings.ReplaceAll(files, "LANGUAGE", language))
+
+		b.AssertFileContent("public/p1/index.html", expect)
+	}
+
+	testLanguage("bash", "Attributes: map[class:my-class]|Options: map[style:monokai tabWidth:8]|")
+	testLanguage("hugo", "Attributes: map[class:my-class]|Options: map[style:monokai tabWidth:8]|")
+	testLanguage("", "Attributes: map[class:my-class]|Options: map[style:monokai tabWidth:8]|")
+}
+
+func TestPanics(t *testing.T) {
+	files := `
+-- hugo.toml --
+[markup]
+[markup.goldmark]
+[markup.goldmark.parser]
+autoHeadingID = true
+autoHeadingIDType = "github"
+[markup.goldmark.parser.attribute]
+block = true
+title = true
+-- content/p1.md --
+---
+title: "p1"
+---
+
+BLOCK
+
+Common
+
+-- layouts/single.html --
+{{ .Content }}
+
+
+`
+
+	for _, test := range []struct {
+		name     string
+		markdown string
+	}{
+		{"issue-9819", "asdf\n: {#myid}"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			b := hugolib.Test(t, strings.ReplaceAll(files, "BLOCK", test.markdown))
+
+			b.AssertFileContent("public/p1/index.html", "Common")
+		})
+	}
+}
+
+// Issue 10835
+func TestAttributesValidation(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+disableKinds = ["taxonomy", "term"]
+-- content/p1.md --
+---
+title: "p1"
+---
+
+## Issue 10835
+
+§§§bash { color=red dimensions=300x200 }
+Hello, World!
+§§§
+
+-- layouts/home.html --
+-- layouts/single.html --
+{{ .Content }}
+-- layouts/_markup/render-codeblock.html --
+Attributes: {{ .Attributes }}|Type: {{ .Type }}|
+`
+
+	b, err := hugolib.TestE(t, files)
+
+	b.Assert(err, qt.Not(qt.IsNil))
+	b.Assert(err.Error(), qt.Contains, "p1.md:7:9\": failed to parse Markdown attributes; you may need to quote the values")
+}
+
+func TestCodeblockPosition(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+-- layouts/_markup/render-codeblock.html --
+{{ .Position | safeHTML }}
+-- layouts/single.html --
+{{ .Content }}
+-- content/p1.md --
+---
+title: "p1"
+---
+
+## Simple
+
+§§§text
+Some code.
+§§§
+
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/p1/index.html", "p1.md:7:1")
+}
+
+func TestCodeblockLangEscape(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+-- layouts/single.html --
+{{ .Content }}
+-- content/p1.md --
+---
+title: "p1"
+---
+
+## Simple
+
+§§§a"><script>A</script>
+Some code.
+§§§
+
+§§§a"><script>B</script> {hl_inline=true}
+Some code.
+§§§
+
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/p1/index.html", "! <script>")
+}
+
+// A quote inside a code-fence attribute value must not break out of the
+// attribute and inject a further attribute (e.g. an event handler).
+// See CVE-2026-10618.
+func TestCodeblockAttributeValueEscape(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+-- layouts/single.html --
+{{ .Content }}
+-- content/p1.md --
+---
+title: "p1"
+---
+
+§§§bash { title="x\" onmouseover=\"alert(1)" }
+echo "hello";
+§§§
+
+§§§bash { class="x\" onmouseover=\"alert(2)" }
+echo "hello";
+§§§
+`
+
+	b := hugolib.Test(t, files)
+
+	// The quote must be escaped so it cannot close the attribute and start a
+	// new one; the literal onmouseover="alert breakout must not appear.
+	b.AssertFileContent("public/p1/index.html",
+		`! onmouseover="alert`,
+		"&#34; onmouseover=&#34;alert(2)",
+		"&quot; onmouseover=&quot;alert(1)",
+	)
+}
+
+// The lineAnchors value from a code-fence attribute is written by Chroma
+// verbatim into id and href attributes, so it must be escaped before it gets there.
+func TestCodeblockLineAnchorsEscape(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+-- layouts/single.html --
+{{ .Content }}
+-- content/p1.md --
+---
+title: "p1"
+---
+
+§§§go {lineNos=true anchorLineNos=true lineAnchors="z\"><script>alert(1)</script>"}
+func main() {}
+§§§
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/p1/index.html",
+		"! <script>",
+		`id="z&#34;&gt;&lt;script&gt;alert(1)&lt;/script&gt;-1"`,
+		`href="#z&#34;&gt;&lt;script&gt;alert(1)&lt;/script&gt;-1"`,
+	)
+}

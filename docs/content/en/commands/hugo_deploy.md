@@ -5,18 +5,18 @@ url: /commands/hugo_deploy/
 ---
 ## hugo deploy
 
-Deploy your site to a Cloud provider.
+Deploy your project to a cloud provider
 
 ### Synopsis
 
-Deploy your site to a Cloud provider.
+Deploy your project to a cloud provider
 
 See https://gohugo.io/hosting-and-deployment/hugo-deploy/ for detailed
 documentation.
 
 
 ```
-hugo deploy [flags]
+hugo deploy [flags] [args]
 ```
 
 ### Options
@@ -29,27 +29,26 @@ hugo deploy [flags]
       --invalidateCDN    invalidate the CDN cache listed in the deployment target (default true)
       --maxDeletes int   maximum # of files to delete, or -1 to disable (default 256)
       --target string    target deployment from deployments section in config file; defaults to the first one
+      --workers int      number of workers to transfer files. defaults to 10 (default 10)
 ```
 
 ### Options inherited from parent commands
 
 ```
-      --config string              config file (default is path/config.yaml|json|toml)
+      --clock string               set the clock used by Hugo, e.g. --clock 2021-11-06T22:30:00.00+09:00
+      --config string              config file (default is hugo.yaml|json|toml)
       --configDir string           config dir (default "config")
-      --debug                      debug output
+  -d, --destination string         filesystem path to write files to
   -e, --environment string         build environment
-      --ignoreVendor               ignores any _vendor directory
       --ignoreVendorPaths string   ignores any _vendor for module paths matching the given Glob pattern
-      --log                        enable Logging
-      --logFile string             log File path (if set, logging enabled automatically)
+      --logLevel string            log level (debug|info|warn|error)
+      --noBuildLock                don't create .hugo_build.lock file
       --quiet                      build in quiet mode
+  -M, --renderToMemory             render to memory (mostly useful when running the server)
   -s, --source string              filesystem path to read files relative from
       --themesDir string           filesystem path to themes directory
-  -v, --verbose                    verbose output
-      --verboseLog                 verbose logging
 ```
 
 ### SEE ALSO
 
-* [hugo](/commands/hugo/)	 - hugo builds your site
-
+* [hugo](/commands/hugo/)	 - Build your project

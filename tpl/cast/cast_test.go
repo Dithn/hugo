@@ -17,7 +17,9 @@ import (
 	"html/template"
 	"testing"
 
+	"github.com/bep/imagemeta"
 	qt "github.com/frankban/quicktest"
+	"github.com/gohugoio/hugo/htesting/hqt"
 )
 
 func TestToInt(t *testing.T) {
@@ -27,8 +29,8 @@ func TestToInt(t *testing.T) {
 	ns := New()
 
 	for i, test := range []struct {
-		v      interface{}
-		expect interface{}
+		v      any
+		expect any
 	}{
 		{"1", 1},
 		{template.HTML("2"), 2},
@@ -59,8 +61,8 @@ func TestToString(t *testing.T) {
 	ns := New()
 
 	for i, test := range []struct {
-		v      interface{}
-		expect interface{}
+		v      any
+		expect any
 	}{
 		{1, "1"},
 		{template.HTML("2"), "2"},
@@ -85,10 +87,11 @@ func TestToFloat(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 	ns := New()
+	oneThird, _ := imagemeta.NewRat[uint32](1, 3)
 
 	for i, test := range []struct {
-		v      interface{}
-		expect interface{}
+		v      any
+		expect any
 	}{
 		{"1", 1.0},
 		{template.HTML("2"), 2.0},
@@ -101,6 +104,7 @@ func TestToFloat(t *testing.T) {
 		{"0", 0.0},
 		{float64(2.12), 2.12},
 		{int64(123), 123.0},
+		{oneThird, 0.3333333333333333},
 		{2, 2.0},
 		{t, false},
 	} {
@@ -114,6 +118,6 @@ func TestToFloat(t *testing.T) {
 		}
 
 		c.Assert(err, qt.IsNil, errMsg)
-		c.Assert(result, qt.Equals, test.expect, errMsg)
+		c.Assert(result, hqt.IsSameFloat64, test.expect, errMsg)
 	}
 }

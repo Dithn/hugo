@@ -56,7 +56,7 @@ func TestToPages(t *testing.T) {
 	p1, p2 := &testPage{title: "p1"}, &testPage{title: "p2"}
 	pages12 := Pages{p1, p2}
 
-	mustToPages := func(in interface{}) Pages {
+	mustToPages := func(in any) Pages {
 		p, err := ToPages(in)
 		c.Assert(err, qt.IsNil)
 		return p
@@ -65,8 +65,20 @@ func TestToPages(t *testing.T) {
 	c.Assert(mustToPages(nil), eq, Pages{})
 	c.Assert(mustToPages(pages12), eq, pages12)
 	c.Assert(mustToPages([]Page{p1, p2}), eq, pages12)
-	c.Assert(mustToPages([]interface{}{p1, p2}), eq, pages12)
+	c.Assert(mustToPages([]any{p1, p2}), eq, pages12)
 
 	_, err := ToPages("not a page")
 	c.Assert(err, qt.Not(qt.IsNil))
+}
+
+func TestIndexOf(t *testing.T) {
+	c := qt.New(t)
+
+	p1, p2, p3, p4 := &testPage{title: "p1"}, &testPage{title: "p2"}, &testPage{title: "p3"}, &testPage{title: "p4"}
+
+	pages := Pages{p1, p2, p3}
+	c.Assert(pages.IndexOf(p1), qt.Equals, 0)
+	c.Assert(pages.IndexOf(p2), qt.Equals, 1)
+	c.Assert(pages.IndexOf(p3), qt.Equals, 2)
+	c.Assert(pages.IndexOf(p4), qt.Equals, -1)
 }

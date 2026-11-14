@@ -15,29 +15,37 @@ package hugolib
 
 import (
 	"net/url"
+	"path"
 	"strings"
 
-	"github.com/gohugoio/hugo/helpers"
+	"github.com/gohugoio/hugo/output"
 
+	"github.com/gohugoio/hugo/resources/kinds"
 	"github.com/gohugoio/hugo/resources/page"
 )
 
-func newPagePaths(
-	s *Site,
-	p page.Page,
-	pm *pageMeta) (pagePaths, error) {
-	targetPathDescriptor, err := createTargetPathDescriptor(s, p, pm)
+func newPagePaths(ps *pageState) (pagePaths, error) {
+	s := ps.s
+	pm := ps.m
+
+	targetPathDescriptor, err := createTargetPathDescriptor(ps)
 	if err != nil {
 		return pagePaths{}, err
 	}
 
-	outputFormats := pm.outputFormats()
-	if len(outputFormats) == 0 {
-		return pagePaths{}, nil
-	}
+	var outputFormats output.Formats
 
-	if pm.noRender() {
-		outputFormats = outputFormats[:1]
+	if ps.m.isStandalone() {
+		outputFormats = output.Formats{ps.m.standaloneOutputFormat}
+	} else {
+		outputFormats = ps.outputFormats()
+		if len(outputFormats) == 0 {
+			return pagePaths{}, nil
+		}
+
+		if pm.noRender() {
+			outputFormats = outputFormats[:1]
+		}
 	}
 
 	pageOutputFormats := make(page.OutputFormats, len(outputFormats))
@@ -64,11 +72,12 @@ func newPagePaths(
 		// Use the main format for permalinks, usually HTML.
 		permalinksIndex := 0
 		if f.Permalinkable {
-			// Unless it's permalinkable
+			// Unless it's permalinkable.
 			permalinksIndex = i
 		}
 
 		targets[f.Name] = targetPathsHolder{
+			relURL:       relPermalink,
 			paths:        paths,
 			OutputFormat: pageOutputFormats[permalinksIndex],
 		}
@@ -88,6 +97,52 @@ func newPagePaths(
 	}, nil
 }
 
+// targetPathDir returns the directory part of p's target path, with any
+// slug set in the section, taxonomy or term pages above it applied.
+func targetPathDir(p *pageState) string {
+	unnormalized := p.s.Conf.DisablePathToLower()
+	pi := p.PathInfo()
+	if unnormalized {
+		pi = pi.Unnormalized()
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(pi.Base()))
+
+	if p.IsBranch() {
+		writeBranchDir(&sb, p, unnormalized)
+	} else {
+		section := p.CurrentSection()
+		writeBranchDir(&sb, section, unnormalized)
+		sb.WriteString(strings.TrimPrefix(pi.ContainerDir(), pathBase(section, unnormalized)))
+	}
+
+	return sb.String()
+}
+
+func writeBranchDir(sb *strings.Builder, p page.Page, unnormalized bool) {
+	if p.IsHome() {
+		return
+	}
+	parent := p.Parent()
+	writeBranchDir(sb, parent, unnormalized)
+	rel := strings.TrimPrefix(pathBase(p, unnormalized), pathBase(parent, unnormalized))
+	if slug := p.Slug(); slug != "" {
+		sb.WriteString(rel[:strings.LastIndexByte(rel, '/')+1])
+		sb.WriteString(slug)
+		return
+	}
+	sb.WriteString(rel)
+}
+
+func pathBase(p page.Page, unnormalized bool) string {
+	pi := p.PathInfo()
+	if unnormalized {
+		pi = pi.Unnormalized()
+	}
+	return pi.Base()
+}
+
 type pagePaths struct {
 	outputFormats     page.OutputFormats
 	firstOutputFormat page.OutputFormat
@@ -100,65 +155,97 @@ func (l pagePaths) OutputFormats() page.OutputFormats {
 	return l.outputFormats
 }
 
-func createTargetPathDescriptor(s *Site, p page.Page, pm *pageMeta) (page.TargetPathDescriptor, error) {
-	var (
-		dir             string
-		baseName        string
-		contentBaseName string
-	)
-
+func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error) {
+	s := p.s
 	d := s.Deps
-
-	if !p.File().IsZero() {
-		dir = p.File().Dir()
-		baseName = p.File().TranslationBaseName()
-		contentBaseName = p.File().ContentBaseName()
+	pm := p.m
+	alwaysInSubDir := p.Kind() == kinds.KindSitemap
+	pageInfoPage := p.PathInfo()
+	if p.s.Conf.DisablePathToLower() {
+		pageInfoPage = pageInfoPage.Unnormalized()
 	}
-
-	if baseName != contentBaseName {
-		// See https://github.com/gohugoio/hugo/issues/4870
-		// A leaf bundle
-		dir = strings.TrimSuffix(dir, contentBaseName+helpers.FilePathSeparator)
-		baseName = contentBaseName
-	}
-
-	alwaysInSubDir := p.Kind() == kindSitemap
 
 	desc := page.TargetPathDescriptor{
 		PathSpec:    d.PathSpec,
 		Kind:        p.Kind(),
-		Sections:    p.SectionsEntries(),
-		UglyURLs:    s.Info.uglyURLs(p),
-		ForcePrefix: s.h.IsMultihost() || alwaysInSubDir,
-		Dir:         dir,
-		URL:         pm.urlPaths.URL,
+		Path:        pageInfoPage,
+		Dir:         targetPathDir(p),
+		UglyURLs:    s.h.Conf.IsUglyURLs(p.Section()),
+		ForcePrefix: s.h.Conf.IsMultihost() || alwaysInSubDir,
+		URL:         pm.pageConfig.URL,
 	}
 
 	if pm.Slug() != "" {
 		desc.BaseName = pm.Slug()
+	} else if pm.isStandalone() && pm.standaloneOutputFormat.BaseName != "" {
+		desc.BaseName = pm.standaloneOutputFormat.BaseName
 	} else {
-		desc.BaseName = baseName
+		desc.BaseName = pageInfoPage.BaseNameNoIdentifier()
 	}
 
-	desc.PrefixFilePath = s.getLanguageTargetPathLang(alwaysInSubDir)
-	desc.PrefixLink = s.getLanguagePermalinkLang(alwaysInSubDir)
+	addPrefix := func(filePath, link string) {
+		if filePath != "" {
+			if desc.PrefixFilePath != "" {
+				desc.PrefixFilePath += "/" + filePath
+			} else {
+				desc.PrefixFilePath += filePath
+			}
+		}
 
-	// Expand only page.KindPage and page.KindTaxonomy; don't expand other Kinds of Pages
-	// like page.KindSection or page.KindTaxonomyTerm because they are "shallower" and
-	// the permalink configuration values are likely to be redundant, e.g.
-	// naively expanding /category/:slug/ would give /category/categories/ for
-	// the "categories" page.KindTaxonomyTerm.
-	if p.Kind() == page.KindPage || p.Kind() == page.KindTerm {
-		opath, err := d.ResourceSpec.Permalinks.Expand(p.Section(), p)
+		if link != "" {
+			if desc.PrefixLink != "" {
+				desc.PrefixLink += "/" + link
+			} else {
+				desc.PrefixLink += link
+			}
+		}
+	}
+
+	// Add path prefixes.
+	// Add any role first, as that is a natural candidate for external ACL checks.
+	// For multihost sites, the file path needs to start with the language code.
+	if s.h.Conf.IsMultihost() {
+		addPrefix(s.getLanguageTargetPathLang(true), "")
+	}
+	rolePrefix := s.getPrefixRole()
+	addPrefix(rolePrefix, rolePrefix)
+	versionPrefix := s.getPrefixVersion()
+	addPrefix(versionPrefix, versionPrefix)
+	if s.h.Conf.IsMultihost() {
+		addPrefix("", s.getLanguagePermalinkLang(alwaysInSubDir))
+	} else {
+		addPrefix(s.getLanguageTargetPathLang(alwaysInSubDir), s.getLanguagePermalinkLang(alwaysInSubDir))
+	}
+
+	if desc.URL != "" && strings.IndexByte(desc.URL, ':') >= 0 {
+		// Attempt to parse and expand an url
+		opath, err := d.ResourceSpec.Permalinks.ExpandPattern(desc.URL, p)
 		if err != nil {
 			return desc, err
 		}
 
 		if opath != "" {
 			opath, _ = url.QueryUnescape(opath)
-			desc.ExpandedPermalink = opath
+			desc.URL = opath
 		}
+	}
 
+	opath, err := d.ResourceSpec.Permalinks.Expand(p)
+	if err != nil {
+		return desc, err
+	}
+
+	if opath != "" {
+		opath, _ = url.QueryUnescape(opath)
+		opath = path.Clean(opath)
+
+		desc.ExpandedPermalink = opath
+
+		if p.File() != nil {
+			s.Log.Debugf("Set expanded permalink path for %s %s to %#v", p.Kind(), p.File().Path(), opath)
+		} else {
+			s.Log.Debugf("Set expanded permalink path for %s %s to %#v", p.Kind(), p.Path(), opath)
+		}
 	}
 
 	return desc, nil

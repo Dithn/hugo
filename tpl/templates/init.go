@@ -14,8 +14,11 @@
 package templates
 
 import (
+	"context"
+
 	"github.com/gohugoio/hugo/deps"
 	"github.com/gohugoio/hugo/tpl/internal"
+	"github.com/gohugoio/hugo/tpl/partials"
 )
 
 const name = "templates"
@@ -26,14 +29,60 @@ func init() {
 
 		ns := &internal.TemplateFuncsNamespace{
 			Name:    name,
-			Context: func(args ...interface{}) (interface{}, error) { return ctx, nil },
+			Context: func(cctx context.Context, args ...any) (any, error) { return ctx, nil },
+			OnCreated: func(m map[string]any) {
+			LOOP:
+				for _, v := range m {
+					switch v := v.(type) {
+					case *partials.Namespace:
+						ctx.partialsNs = v
+						break LOOP
+					}
+				}
+				if ctx.partialsNs == nil {
+					panic("partialsNs namespace not found")
+				}
+			},
 		}
+
+		ns.AddMethodMapping(ctx.Current,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.Defer,
+			nil, // No aliases to keep the AST parsing simple.
+			[][2]string{},
+		)
+
+		// For internal use only.
+		ns.AddMethodMapping(ctx.DoDefer,
+			[]string{"doDefer"},
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.Inner,
+			[]string{"inner"},
+			[][2]string{},
+		)
+
+		// For internal use only.
+		ns.AddMethodMapping(ctx._PushPartialDecorator,
+			[]string{"_pushPartialDecorator"},
+			[][2]string{},
+		)
+
+		// For internal use only.
+		ns.AddMethodMapping(ctx._PopPartialDecorator,
+			[]string{"_popPartialDecorator"},
+			[][2]string{},
+		)
 
 		ns.AddMethodMapping(ctx.Exists,
 			nil,
 			[][2]string{
-				{`{{ if (templates.Exists "partials/header.html") }}Yes!{{ end }}`, `Yes!`},
-				{`{{ if not (templates.Exists "partials/doesnotexist.html") }}No!{{ end }}`, `No!`},
+				{`{{ if (templates.Exists "_partials/header.html") }}Yes!{{ end }}`, `Yes!`},
+				{`{{ if not (templates.Exists "_partials/doesnotexist.html") }}No!{{ end }}`, `No!`},
 			},
 		)
 

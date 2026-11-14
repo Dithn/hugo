@@ -1,0 +1,4 @@
+[codespell]
+skip = .cspell.jsonc,./data/docs.yaml
+ignore-words-list = ist,januar,ue,womens
+check-filenames = true

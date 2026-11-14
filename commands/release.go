@@ -1,6 +1,4 @@
-// +build release
-
-// Copyright 2017-present The Hugo Authors. All rights reserved.
+// Copyright 2024 The Hugo Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,56 +14,42 @@
 package commands
 
 import (
-	"errors"
+	"context"
 
-	"github.com/gohugoio/hugo/config"
+	"github.com/bep/simplecobra"
 	"github.com/gohugoio/hugo/releaser"
 	"github.com/spf13/cobra"
 )
 
-var _ cmder = (*releaseCommandeer)(nil)
+// Note: This is a command only meant for internal use and must be run
+// via "go run -tags release main.go release" on the actual code base that is in the release.
+func newReleaseCommand() simplecobra.Commander {
+	var (
+		step     int
+		skipPush bool
+		try      bool
+		version  string
+	)
 
-type releaseCommandeer struct {
-	cmd *cobra.Command
+	return &simpleCommand{
+		name:  "release",
+		short: "Release a new version of Hugo",
+		run: func(ctx context.Context, cd *simplecobra.Commandeer, r *rootCommand, args []string) error {
+			rel, err := releaser.New(skipPush, try, step, version)
+			if err != nil {
+				return err
+			}
 
-	version string
-
-	skipPublish bool
-	try         bool
-}
-
-func createReleaser() cmder {
-	// Note: This is a command only meant for internal use and must be run
-	// via "go run -tags release main.go release" on the actual code base that is in the release.
-	r := &releaseCommandeer{
-		cmd: &cobra.Command{
-			Use:    "release",
-			Short:  "Release a new version of Hugo.",
-			Hidden: true,
+			return rel.Run()
+		},
+		withc: func(cmd *cobra.Command, r *rootCommand) {
+			cmd.Hidden = true
+			cmd.ValidArgsFunction = cobra.NoFileCompletions
+			cmd.PersistentFlags().BoolVarP(&skipPush, "skip-push", "", false, "skip pushing to remote")
+			cmd.PersistentFlags().BoolVarP(&try, "try", "", false, "no changes")
+			cmd.PersistentFlags().IntVarP(&step, "step", "", 0, "step to run (1: set new version 2: prepare next dev version)")
+			cmd.PersistentFlags().StringVarP(&version, "version", "", "", "version to release (derived from branch name if not set)")
+			_ = cmd.RegisterFlagCompletionFunc("step", cobra.FixedCompletions([]string{"1", "2"}, cobra.ShellCompDirectiveNoFileComp))
 		},
 	}
-
-	r.cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return r.release()
-	}
-
-	r.cmd.PersistentFlags().StringVarP(&r.version, "rel", "r", "", "new release version, i.e. 0.25.1")
-	r.cmd.PersistentFlags().BoolVarP(&r.skipPublish, "skip-publish", "", false, "skip all publishing pipes of the release")
-	r.cmd.PersistentFlags().BoolVarP(&r.try, "try", "", false, "simulate a release, i.e. no changes")
-
-	return r
-}
-
-func (c *releaseCommandeer) getCommand() *cobra.Command {
-	return c.cmd
-}
-
-func (c *releaseCommandeer) flagsToConfig(cfg config.Provider) {
-}
-
-func (r *releaseCommandeer) release() error {
-	if r.version == "" {
-		return errors.New("must set the --rel flag to the relevant version number")
-	}
-	return releaser.New(r.version, r.skipPublish, r.try).Run()
 }

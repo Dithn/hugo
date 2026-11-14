@@ -14,24 +14,31 @@
 package hugolib
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"strings"
 	"sync"
 
-	"github.com/gohugoio/hugo/tpl"
+	"github.com/bep/logg"
+	"github.com/gohugoio/go-radix"
+	"github.com/gohugoio/hugo/common/paths"
+	"github.com/gohugoio/hugo/hugolib/doctree"
+	"github.com/gohugoio/hugo/tpl/tplimpl"
 
 	"github.com/gohugoio/hugo/config"
 
-	"github.com/gohugoio/hugo/output"
-	"github.com/pkg/errors"
-
+	"github.com/gohugoio/hugo/resources/kinds"
 	"github.com/gohugoio/hugo/resources/page"
-	"github.com/gohugoio/hugo/resources/page/pagemeta"
 )
 
 type siteRenderContext struct {
 	cfg *BuildCfg
+
+	infol logg.LevelLogger
+
+	// languageIdx is the zero based index of the site.
+	languageIdx int
 
 	// Zero based index for all output formats combined.
 	sitesOutIdx int
@@ -43,20 +50,24 @@ type siteRenderContext struct {
 	multihost bool
 }
 
-// Whether to render 404.html, robotsTXT.txt which usually is rendered
-// once only in the site root.
-func (s siteRenderContext) renderSingletonPages() bool {
-	if s.multihost {
+// Whether to render 404.html, robotsTXT.txt and similar.
+// These are usually rendered once in the root of public.
+func (s siteRenderContext) shouldRenderStandalonePage(kind string) bool {
+	if s.multihost || kind == kinds.KindSitemap {
 		// 1 per site
 		return s.outIdx == 0
 	}
 
-	// 1 for all sites
-	return s.sitesOutIdx == 0
+	if kind == kinds.KindTemporary || kind == kinds.KindStatus404 {
+		// 1 for all output formats
+		return s.outIdx == 0
+	}
+
+	// 1 for all sites and output formats.
+	return s.languageIdx == 0 && s.outIdx == 0
 }
 
-// renderPages renders pages each corresponding to a markdown file.
-// TODO(bep np doc
+// renderPages renders pages concurrently.
 func (s *Site) renderPages(ctx *siteRenderContext) error {
 	numWorkers := config.GetNumWorkerMultiplier()
 
@@ -68,24 +79,32 @@ func (s *Site) renderPages(ctx *siteRenderContext) error {
 
 	wg := &sync.WaitGroup{}
 
-	for i := 0; i < numWorkers; i++ {
+	for range numWorkers {
 		wg.Add(1)
 		go pageRenderer(ctx, s, pages, results, wg)
 	}
 
 	cfg := ctx.cfg
 
-	s.pageMap.pageTrees.Walk(func(ss string, n *contentNode) bool {
-		if cfg.shouldRender(n.p) {
-			select {
-			case <-s.h.Done():
-				return true
-			default:
-				pages <- n.p
+	w := &doctree.NodeShiftTreeWalker[contentNode]{
+		Tree: s.pageMap.treePages,
+		Handle: func(key string, n contentNode) (radix.WalkFlag, error) {
+			if p, ok := n.(*pageState); ok {
+				if cfg.shouldRender(ctx.infol, p) {
+					select {
+					case <-s.h.Done():
+						return radix.WalkStop, nil
+					case pages <- p:
+					}
+				}
 			}
-		}
-		return false
-	})
+			return radix.WalkContinue, nil
+		},
+	}
+
+	if err := w.Walk(context.Background()); err != nil {
+		return err
+	}
 
 	close(pages)
 
@@ -95,7 +114,7 @@ func (s *Site) renderPages(ctx *siteRenderContext) error {
 
 	err := <-errs
 	if err != nil {
-		return errors.Wrap(err, "failed to render pages")
+		return fmt.Errorf("%v failed to render pages: %w", s.resolveDimensionNames(), err)
 	}
 	return nil
 }
@@ -105,14 +124,46 @@ func pageRenderer(
 	s *Site,
 	pages <-chan *pageState,
 	results chan<- error,
-	wg *sync.WaitGroup) {
+	wg *sync.WaitGroup,
+) {
 	defer wg.Done()
 
+	sendErr := func(err error) bool {
+		select {
+		case results <- err:
+			return true
+		case <-s.h.Done():
+			return false
+		}
+	}
+
 	for p := range pages {
-		if p.m.buildConfig.PublishResources {
+
+		if p.m.isStandalone() && !ctx.shouldRenderStandalonePage(p.Kind()) {
+			continue
+		}
+
+		if p.m.pageConfig.Build.PublishResources {
 			if err := p.renderResources(); err != nil {
-				s.SendError(p.errorf(err, "failed to render page resources"))
-				continue
+				if sendErr(p.errorf(err, "failed to render resources")) {
+					continue
+				} else {
+					return
+				}
+			}
+		}
+
+		if !s.conf.DisableAliases && !s.h.BuildState.IsRebuild() && p.render {
+			of := p.outputFormat()
+			if of.IsHTML && of.Permalinkable {
+				// Render any aliases for this page.
+				if err := s.renderAliasesForPage(p); err != nil {
+					if sendErr(err) {
+						continue
+					} else {
+						return
+					}
+				}
 			}
 		}
 
@@ -123,24 +174,65 @@ func pageRenderer(
 
 		templ, found, err := p.resolveTemplate()
 		if err != nil {
-			s.SendError(p.errorf(err, "failed to resolve template"))
-			continue
+			if sendErr(p.errorf(err, "failed to resolve template")) {
+				continue
+			} else {
+				return
+			}
 		}
 
 		if !found {
-			s.logMissingLayout("", p.Layout(), p.Kind(), p.f.Name)
+			s.Log.Trace(
+				func() string {
+					return fmt.Sprintf("no layout for kind %q found", p.Kind())
+				},
+			)
+			// Don't emit warning for missing 404 etc. pages.
+			if !p.m.isStandalone() {
+				s.logMissingLayout("", p.Layout(), p.Kind(), p.f.Name)
+			}
 			continue
 		}
 
 		targetPath := p.targetPaths().TargetFilename
 
-		if err := s.renderAndWritePage(&s.PathSpec.ProcessingStats.Pages, "page "+p.Title(), targetPath, p, templ); err != nil {
-			results <- err
+		s.Log.Trace(
+			func() string {
+				return fmt.Sprintf("rendering outputFormat %q kind %q using layout %q to %q", p.pageOutput.f.Name, p.Kind(), templ.Name(), targetPath)
+			},
+		)
+
+		var d any = p
+		switch p.Kind() {
+		case kinds.KindSitemapIndex:
+			d = s.h.Sites
+		}
+
+		if err := s.renderAndWritePage(&s.PathSpec.ProcessingStats.Pages, targetPath, p, d, templ); err != nil {
+			if sendErr(err) {
+				continue
+			} else {
+				return
+			}
+		}
+
+		if of := p.outputFormat(); p.IsHome() && of.IsHTML && s.isDefault() && (of.Path != "" || of.Name == "html") {
+			if err = s.renderDefaultSiteRedirect(p); err != nil {
+				if sendErr(err) {
+					continue
+				} else {
+					return
+				}
+			}
 		}
 
 		if p.paginator != nil && p.paginator.current != nil {
 			if err := s.renderPaginator(p, templ); err != nil {
-				results <- err
+				if sendErr(err) {
+					continue
+				} else {
+					return
+				}
 			}
 		}
 	}
@@ -153,7 +245,7 @@ func (s *Site) logMissingLayout(name, layout, kind, outputFormat string) {
 	}
 
 	errMsg := "You should create a template file which matches Hugo Layouts Lookup Rules for this combination."
-	var args []interface{}
+	var args []any
 	msg := "found no layout file for"
 	if outputFormat != "" {
 		msg += " %q"
@@ -177,29 +269,30 @@ func (s *Site) logMissingLayout(name, layout, kind, outputFormat string) {
 
 	msg += ": " + errMsg
 
-	log.Printf(msg, args...)
+	log.Logf(msg, args...)
 }
 
 // renderPaginator must be run after the owning Page has been rendered.
-func (s *Site) renderPaginator(p *pageState, templ tpl.Template) error {
-	paginatePath := s.Cfg.GetString("paginatePath")
+func (s *Site) renderPaginator(p *pageState, templ *tplimpl.TemplInfo) error {
+	paginatePath := s.Conf.Pagination().Path
 
 	d := p.targetPathDescriptor
-	f := p.s.rc.Format
+	f := p.outputFormat()
 	d.Type = f
 
 	if p.paginator.current == nil || p.paginator.current != p.paginator.current.First() {
 		panic(fmt.Sprintf("invalid paginator state for %q", p.pathOrTitle()))
 	}
 
-	if f.IsHTML {
+	if f.IsHTML && !s.Conf.Pagination().DisableAliases {
 		// Write alias for page 1
 		d.Addends = fmt.Sprintf("/%s/%d", paginatePath, 1)
 		targetPaths := page.CreateTargetPaths(d)
 
-		if err := s.writeDestAlias(targetPaths.TargetFilename, p.Permalink(), f, nil); err != nil {
+		if err := s.writeDestAlias(targetPaths.TargetFilename, p.Permalink(), f, p); err != nil {
 			return err
 		}
+
 	}
 
 	// Render pages for the rest
@@ -211,8 +304,7 @@ func (s *Site) renderPaginator(p *pageState, templ tpl.Template) error {
 
 		if err := s.renderAndWritePage(
 			&s.PathSpec.ProcessingStats.PaginatorPages,
-			p.Title(),
-			targetPaths.TargetFilename, p, templ); err != nil {
+			targetPaths.TargetFilename, p, p, templ); err != nil {
 			return err
 		}
 
@@ -221,184 +313,73 @@ func (s *Site) renderPaginator(p *pageState, templ tpl.Template) error {
 	return nil
 }
 
-func (s *Site) render404() error {
-	p, err := newPageStandalone(&pageMeta{
-		s:    s,
-		kind: kind404,
-		urlPaths: pagemeta.URLPath{
-			URL: "404.html",
-		},
-	},
-		output.HTMLFormat,
-	)
-	if err != nil {
-		return err
-	}
-
-	if !p.render {
-		return nil
-	}
-
-	var d output.LayoutDescriptor
-	d.Kind = kind404
-
-	templ, found, err := s.Tmpl().LookupLayout(d, output.HTMLFormat)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return nil
-	}
-
-	targetPath := p.targetPaths().TargetFilename
-
-	if targetPath == "" {
-		return errors.New("failed to create targetPath for 404 page")
-	}
-
-	return s.renderAndWritePage(&s.PathSpec.ProcessingStats.Pages, "404 page", targetPath, p, templ)
-}
-
-func (s *Site) renderSitemap() error {
-	p, err := newPageStandalone(&pageMeta{
-		s:    s,
-		kind: kindSitemap,
-		urlPaths: pagemeta.URLPath{
-			URL: s.siteCfg.sitemap.Filename,
-		},
-	},
-		output.HTMLFormat,
-	)
-	if err != nil {
-		return err
-	}
-
-	if !p.render {
-		return nil
-	}
-
-	targetPath := p.targetPaths().TargetFilename
-
-	if targetPath == "" {
-		return errors.New("failed to create targetPath for sitemap")
-	}
-
-	templ := s.lookupLayouts("sitemap.xml", "_default/sitemap.xml", "_internal/_default/sitemap.xml")
-
-	return s.renderAndWriteXML(&s.PathSpec.ProcessingStats.Sitemaps, "sitemap", targetPath, p, templ)
-}
-
-func (s *Site) renderRobotsTXT() error {
-	if !s.Cfg.GetBool("enableRobotsTXT") {
-		return nil
-	}
-
-	p, err := newPageStandalone(&pageMeta{
-		s:    s,
-		kind: kindRobotsTXT,
-		urlPaths: pagemeta.URLPath{
-			URL: "robots.txt",
-		},
-	},
-		output.RobotsTxtFormat)
-	if err != nil {
-		return err
-	}
-
-	if !p.render {
-		return nil
-	}
-
-	templ := s.lookupLayouts("robots.txt", "_default/robots.txt", "_internal/_default/robots.txt")
-
-	return s.renderAndWritePage(&s.PathSpec.ProcessingStats.Pages, "Robots Txt", p.targetPaths().TargetFilename, p, templ)
-}
-
-// renderAliases renders shell pages that simply have a redirect in the header.
-func (s *Site) renderAliases() error {
-	var err error
-	s.pageMap.pageTrees.WalkLinkable(func(ss string, n *contentNode) bool {
-		p := n.p
-		if len(p.Aliases()) == 0 {
-			return false
+func (s *Site) renderAliasesForPage(p *pageState) error {
+	po := p.pageOutput
+	f := po.f
+	plink := p.Permalink()
+	for _, a := range p.Aliases() {
+		err := s.writeDestAlias(a, plink, f, p)
+		if err != nil {
+			return err
 		}
-
-		pathSeen := make(map[string]bool)
-
-		for _, of := range p.OutputFormats() {
-			if !of.Format.IsHTML {
-				continue
-			}
-
-			f := of.Format
-
-			if pathSeen[f.Path] {
-				continue
-			}
-			pathSeen[f.Path] = true
-
-			plink := of.Permalink()
-
-			for _, a := range p.Aliases() {
-				isRelative := !strings.HasPrefix(a, "/")
-
-				if isRelative {
-					// Make alias relative, where "." will be on the
-					// same directory level as the current page.
-					basePath := path.Join(p.targetPaths().SubResourceBaseLink, "..")
-					a = path.Join(basePath, a)
-
-				} else {
-					// Make sure AMP and similar doesn't clash with regular aliases.
-					a = path.Join(f.Path, a)
-				}
-
-				if s.UglyURLs && !strings.HasSuffix(a, ".html") {
-					a += ".html"
-				}
-
-				lang := p.Language().Lang
-
-				if s.h.multihost && !strings.HasPrefix(a, "/"+lang) {
-					// These need to be in its language root.
-					a = path.Join(lang, a)
-				}
-
-				err = s.writeDestAlias(a, plink, f, p)
-				if err != nil {
-					return true
-				}
-			}
-		}
-		return false
-	})
-
-	return err
+	}
+	return nil
 }
 
-// renderMainLanguageRedirect creates a redirect to the main language home,
+// renderDefaultSiteRedirect creates a redirect to the default site's home,
 // depending on if it lives in sub folder (e.g. /en) or not.
-func (s *Site) renderMainLanguageRedirect() error {
-	if !s.h.multilingual.enabled() || s.h.IsMultihost() {
-		// No need for a redirect
+// The default site is the site is the combination of defaultContentLanguage,
+// defaultContentVersion and defaultContentRole.
+func (s *Site) renderDefaultSiteRedirect(home *pageState) error {
+	if s.conf.DisableDefaultLanguageRedirect || s.conf.DisableDefaultSiteRedirect {
 		return nil
 	}
 
-	html, found := s.outputFormatsConfig.GetByName("HTML")
-	if found {
-		mainLang := s.h.multilingual.DefaultLang
-		if s.Info.defaultContentLanguageInSubdir {
-			mainLangURL := s.PathSpec.AbsURL(mainLang.Lang+"/", false)
-			s.Log.Debugf("Write redirect to main language %s: %s", mainLang, mainLangURL)
-			if err := s.publishDestAlias(true, "/", mainLangURL, html, nil); err != nil {
-				return err
-			}
-		} else {
-			mainLangURL := s.PathSpec.AbsURL("", false)
-			s.Log.Debugf("Write redirect to main language %s: %s", mainLang, mainLangURL)
-			if err := s.publishDestAlias(true, mainLang.Lang, mainLangURL, html, nil); err != nil {
-				return err
-			}
+	addRedirectInRoot := s.conf.DefaultContentLanguageInSubdir && !s.Conf.IsMultihost()
+	addRedirectInRoot = addRedirectInRoot || s.conf.DefaultContentVersionInSubdir || s.conf.DefaultContentRoleInSubdir
+
+	homeLink := home.pageOutput.targetPaths().Link // This doesn't have any baseURL paths in it.
+
+	of := home.outputFormat()
+	homePermalink := home.Permalink()
+
+	var ps []string
+	if of.Path != "" {
+		if addRedirectInRoot {
+			// For OutputFormats with a path, creating more than one alias will easily create path clashes without much value.
+			ps = []string{paths.AddLeadingAndTrailingSlash(of.Path)}
+		}
+	} else {
+		if addRedirectInRoot {
+			ps = append(ps, "/")
+		}
+
+		if s.Conf.IsMultilingual() && !s.conf.DefaultContentLanguageInSubdir && !s.Conf.IsMultihost() {
+			// Create redirect from e.g. /en => /
+			ps = append(ps, homeLink+s.Lang()+"/")
+		}
+
+		// /guest/v1.0.0/en/
+		//    /,/guest/,/guest/v1.0.0  = /guest/v1.0.0/en/
+		// /guest/v1.0.0/
+		//    /,/guest/ =  /guest/v1.0.0/
+		parts := strings.Split(strings.Trim(homeLink, "/"), "/")
+
+		for i := 0; i < len(parts)-1; i++ {
+			ps = append(ps, paths.AddLeadingAndTrailingSlash(strings.Join(parts[0:i+1], "/")))
+		}
+	}
+
+	if s.h.Configs.IsMultihost {
+		prefix := "/" + s.LanguagePrefix()
+		for i, p := range ps {
+			ps[i] = path.Join(prefix, p)
+		}
+	}
+
+	for _, p := range ps {
+		if err := s.publishDestAlias(true, p, homePermalink, of, home); err != nil {
+			return err
 		}
 	}
 

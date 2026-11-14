@@ -1,58 +1,112 @@
 ---
-title: Frequently Asked Questions
-linktitle: FAQ
-description: Solutions to some common Hugo problems.
-date: 2018-02-10
-categories: [troubleshooting]
-menu:
-  docs:
-    parent: "troubleshooting"
-keywords: [faqs]
-weight: 2
-toc: true
-aliases: [/faq/]
+title: Frequently asked questions
+linkTitle: FAQs
+description: These questions are frequently asked by new users.
+categories: []
+keywords: []
 ---
 
-{{% note %}}
-**Note:** The answers/solutions presented below are short, and may not be enough to solve your problem. Visit [Hugo Discourse](https://discourse.gohugo.io/) and use the search. It that does not help, start a new topic and ask your questions.
-{{% /note %}}
+Hugo's [forum][] is an active community of users and developers who answer questions, share knowledge, and provide examples. A quick search of over 20,000 topics will often answer your question. Please be sure to read about [requesting help][] before asking your first question.
 
-## I can't see my content!
+These are just a few of the questions most frequently asked by new users.
 
-Is your markdown file [in draft mode](https://gohugo.io/content-management/front-matter/#front-matter-variables)? When testing, run `hugo server` with the `-D` or `--buildDrafts` [switch](https://gohugo.io/getting-started/usage/#draft-future-and-expired-content).
+An error message indicates that a feature is not available. Why?
+: When you attempt to use a feature that is not available in the edition that you installed, Hugo throws this error:
 
-## Can I set configuration variables via OS environment?
+  ```go-html-template
+  this feature is not available in this edition of Hugo
+  ```
 
-Yes you can! See [Configure with Environment Variables](/getting-started/configuration/#configure-with-environment-variables).
+  To resolve, install a different edition. See the [installation][] section for details.
 
-## How do I schedule posts?
+Why do I see "Page Not Found" when visiting the home page?
+: In the `content/_index.md` file:
 
-1. Set `publishDate` in the page [Front Matter](/content-management/front-matter/) to a datetime in the future. If you want the creation and publication datetime to be the same, it's also sufficient to only set `date`[^date-hierarchy].
-2. Build and publish at intervals.
+  - Is `draft` set to `true`?
+  - Is the `date` in the future?
+  - Is the `publishDate` in the future?
+  - Is the `expiryDate` in the past?
 
-How to automate the "publish at intervals" part depends on your situation:
+  If the answer to any of these questions is yes, either change the field values, or use one of these command-line flags: `--buildDrafts`, `--buildFuture`, or `--buildExpired`.
 
-* If you deploy from your own PC/server, you can automate with [Cron](https://en.wikipedia.org/wiki/Cron) or similar.
-* If your site is hosted on a service similar to [Netlify](https://www.netlify.com/) you can use a service such as [ifttt](https://ifttt.com/date_and_time) to schedule the updates.
+Why is a given page not published?
+: In the `content/section/page.md` file, or in the `content/section/page/index.md` file:
 
-Also see this Twitter thread:
+  - Is `draft` set to `true`?
+  - Is the `date` in the future?
+  - Is the `publishDate` in the future?
+  - Is the `expiryDate` in the past?
 
-{{< tweet user="ChrisShort" id="962380712027590657" >}}
+  If the answer to any of these questions is yes, either change the field values, or use one of these command-line flags: `--buildDrafts`, `--buildFuture`, or `--buildExpired`.
 
-[^date-hierarchy]: See [Configure Dates](https://gohugo.io/getting-started/configuration/#configure-dates) for the order in which the different date variables are complemented by each other when not explicitly set.
+Why can't I see any of a page's descendants?
+: You may have an&nbsp;`index.md`&nbsp;file instead of an&nbsp;`_index.md`&nbsp;file. See [details][page bundles].
 
-## Can I use the latest Hugo version on Netlify?
+What is the difference between an&nbsp;`index.md`&nbsp;file and an&nbsp;`_index.md`&nbsp;file?
+: A directory with an `index.md file` is a [leaf bundle](g). A directory with an&nbsp;`_index.md`&nbsp;file is a [branch bundle](g). See [details][page bundles].
 
-Yes you can! Read [this](/hosting-and-deployment/hosting-on-netlify/#configure-hugo-version-in-netlify).
+Why is my _partial_ template not rendered as expected?
+: You may have neglected to pass the required [context](g) when calling the _partial_ template. For example:
 
-## I get "TOCSS ... this feature is not available in your current Hugo version"
+  ```go-html-template
+  {{/* incorrect */}}
+  {{ partial "pagination.html" }}
 
-If you process `SCSS` or `SASS` to `CSS` in your Hugo project, you need the Hugo `extended` version, or else you may see this error message:
+  {{/* correct */}}
+  {{ partial "pagination.html" . }}
+  ```
 
-```bash
-error: failed to transform resource: TOCSS: failed to transform "scss/main.scss" (text/x-scss): this feature is not available in your current Hugo version
-```
+In a template, what's the difference between `:=` and `=` when assigning values to variables?
+: Use `:=` to initialize a variable, and use `=` to assign a value to a variable that has been previously initialized. See [details][variables].
 
-We release two set of binaries for technical reasons. The extended version is not what you get by default for some installation methods. On the [release page](https://github.com/gohugoio/hugo/releases), look for archives with `extended` in the name. To build `hugo-extended`, use `go install --tags extended`
+When I paginate a list page, why is the page collection not filtered as specified?
+: You are probably invoking the [`Paginate`][] or [`Paginator`][] method more than once on the same page. See [details][pagination].
 
-To confirm, run `hugo version` and look for the word `extended`.
+Why are there two ways to call a shortcode?
+: Use the `{{%/* shortcode */%}}` notation if the _shortcode_ template, or the content between the opening and closing shortcode tags, contains Markdown. Otherwise use the\
+`{{</* shortcode */>}}` notation. See [details][notation].
+
+Can I use environment variables to control configuration?
+: Yes. See [details][environment-variables].
+
+Why am I seeing inconsistent output from one build to the next?
+: The most common causes are page collisions (publishing two pages to the same path) and the effects of concurrency. Use the `--printPathWarnings` command-line flag to check for page collisions, and create a topic on the [forum][] if you suspect concurrency problems.
+
+Why isn't Hugo's development server detecting file changes?
+: In its default configuration, Hugo's file watcher may not be able detect file changes when:
+
+  - Running Hugo within Windows Subsystem for Linux (WSL/WSL2) with project files on a Windows partition
+  - Running Hugo locally with project files on a removable drive
+  - Running Hugo locally with project files on a storage server accessed via the NFS, SMB, or CIFS protocols
+
+  In these cases, instead of monitoring native file system events, use the `--poll` command-line flag. For example, to poll the project files every 700 milliseconds, use `--poll 700ms`.
+
+Why is my page Store missing a value?
+: The [`Store`][] method on a `Page` object creates a persistent data structure for storing and manipulating keyed values on the given page. Values are often set within a _shortcode_ template, a _partial_ template called by a _shortcode_ template, or by a _render hook_ template. In all three cases, the stored values are not determinate until Hugo renders the page content.
+
+  If you need to access a stored value from a parent template, and the parent template has not yet rendered the page content, you can trigger content rendering by assigning the returned value to a [noop](g) variable:
+
+  ```go-html-template
+  {{ $noop := .Content }}
+  {{ .Store.Get "mykey" }}
+  ```
+
+  You can trigger content rendering with other methods as well. See next FAQ.
+
+Which page methods trigger content rendering?
+: The following methods on a `Page` object trigger content rendering: `Content`, `ContentWithoutSummary`, `FuzzyWordCount`, `Len`, `Plain`, `PlainWords`, `ReadingTime`, `Summary`, `Truncated`, and `WordCount`.
+
+> [!NOTE]
+> For other questions please visit the [forum][]. A quick search of over 20,000 topics will often answer your question. Please be sure to read about [requesting help][] before asking your first question.
+
+[`Paginate`]: /methods/page/paginate/
+[`Paginator`]: /methods/page/paginator/
+[`Store`]: /methods/page/store/
+[environment-variables]: /configuration/introduction/#environment-variables
+[forum]: https://discourse.gohugo.io
+[installation]: /installation/
+[notation]: /content-management/shortcodes/#notation
+[page bundles]: /content-management/page-bundles/
+[pagination]: /templates/pagination/
+[requesting help]: https://discourse.gohugo.io/t/requesting-help/9132
+[variables]: https://pkg.go.dev/text/template#hdr-Variables

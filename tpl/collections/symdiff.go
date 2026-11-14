@@ -17,12 +17,12 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/pkg/errors"
+	"github.com/gohugoio/hugo/common/hreflect"
 )
 
 // SymDiff returns the symmetric difference of s1 and s2.
 // Arguments must be either a slice or an array of comparable types.
-func (ns *Namespace) SymDiff(s2, s1 interface{}) (interface{}, error) {
+func (ns *Namespace) SymDiff(s2, s1 any) (any, error) {
 	ids1, err := collectIdentities(s1)
 	if err != nil {
 		return nil, err
@@ -35,7 +35,7 @@ func (ns *Namespace) SymDiff(s2, s1 interface{}) (interface{}, error) {
 	var slice reflect.Value
 	var sliceElemType reflect.Type
 
-	for i, s := range []interface{}{s1, s2} {
+	for i, s := range []any{s1, s2} {
 		v := reflect.ValueOf(s)
 
 		switch v.Kind() {
@@ -46,15 +46,15 @@ func (ns *Namespace) SymDiff(s2, s1 interface{}) (interface{}, error) {
 				slice = reflect.MakeSlice(sliceType, 0, 0)
 			}
 
-			for i := 0; i < v.Len(); i++ {
-				ev, _ := indirectInterface(v.Index(i))
+			for i := range v.Len() {
+				ev, _ := hreflect.Indirect(v.Index(i))
 				key := normalize(ev)
 
 				// Append if the key is not in their intersection.
 				if ids1[key] != ids2[key] {
 					v, err := convertValue(ev, sliceElemType)
 					if err != nil {
-						return nil, errors.WithMessage(err, "symdiff: failed to convert value")
+						return nil, fmt.Errorf("symdiff: failed to convert value: %w", err)
 					}
 					slice = reflect.Append(slice, v)
 				}

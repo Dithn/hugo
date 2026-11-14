@@ -18,7 +18,6 @@ import (
 
 	qt "github.com/frankban/quicktest"
 	"github.com/gohugoio/hugo/config"
-	
 )
 
 func TestDecodeConfigFromTOML(t *testing.T) {
@@ -36,6 +35,8 @@ id = "ga_id"
 [services.instagram]
 disableInlineCSS = true
 [services.twitter]
+disableInlineCSS = true
+[services.x]
 disableInlineCSS = true
 `
 	cfg, err := config.FromConfigString(tomlConfig, "toml")

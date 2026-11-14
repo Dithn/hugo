@@ -32,19 +32,11 @@ type PathSpec struct {
 
 	// The file systems to use
 	Fs *hugofs.Fs
-
-	// The config provider to use
-	Cfg config.Provider
 }
 
 // NewPathSpec creates a new PathSpec from the given filesystems and language.
-func NewPathSpec(fs *hugofs.Fs, cfg config.Provider, logger loggers.Logger) (*PathSpec, error) {
-	return NewPathSpecWithBaseBaseFsProvided(fs, cfg, logger, nil)
-}
-
-// NewPathSpecWithBaseBaseFsProvided creats a new PathSpec from the given filesystems and language.
 // If an existing BaseFs is provided, parts of that is reused.
-func NewPathSpecWithBaseBaseFsProvided(fs *hugofs.Fs, cfg config.Provider, logger loggers.Logger, baseBaseFs *filesystems.BaseFs) (*PathSpec, error) {
+func NewPathSpec(fs *hugofs.Fs, cfg config.AllProvider, logger loggers.Logger, baseBaseFs *filesystems.BaseFs) (*PathSpec, error) {
 	p, err := paths.New(fs, cfg)
 	if err != nil {
 		return nil, err
@@ -65,13 +57,7 @@ func NewPathSpecWithBaseBaseFsProvided(fs *hugofs.Fs, cfg config.Provider, logge
 		Paths:           p,
 		BaseFs:          bfs,
 		Fs:              fs,
-		Cfg:             cfg,
 		ProcessingStats: NewProcessingStats(p.Lang()),
-	}
-
-	basePath := ps.BaseURL.Path()
-	if basePath != "" && basePath != "/" {
-		ps.BasePath = basePath
 	}
 
 	return ps, nil
@@ -79,9 +65,5 @@ func NewPathSpecWithBaseBaseFsProvided(fs *hugofs.Fs, cfg config.Provider, logge
 
 // PermalinkForBaseURL creates a permalink from the given link and baseURL.
 func (p *PathSpec) PermalinkForBaseURL(link, baseURL string) string {
-	link = strings.TrimPrefix(link, "/")
-	if !strings.HasSuffix(baseURL, "/") {
-		baseURL += "/"
-	}
-	return baseURL + link
+	return baseURL + strings.TrimPrefix(link, "/")
 }

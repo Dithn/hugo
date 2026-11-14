@@ -1,4 +1,4 @@
-// Copyright 2019 The Hugo Authors. All rights reserved.
+// Copyright 2024 The Hugo Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,11 +16,13 @@ package page
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	qt "github.com/frankban/quicktest"
+	"github.com/gohugoio/hugo/source"
 )
 
 // testdataPermalinks is used by a couple of tests; the expandsTo content is
@@ -28,26 +30,90 @@ import (
 var testdataPermalinks = []struct {
 	spec      string
 	valid     bool
+	withPage  func(p *testPage)
 	expandsTo string
 }{
-	{":title", true, "spf13-vim-3.0-release-and-new-website"},
-	{"/:year-:month-:title", true, "/2012-04-spf13-vim-3.0-release-and-new-website"},
-	{"/:year/:yearday/:month/:monthname/:day/:weekday/:weekdayname/", true, "/2012/97/04/April/06/5/Friday/"}, // Dates
-	{"/:section/", true, "/blue/"},                                  // Section
-	{"/:title/", true, "/spf13-vim-3.0-release-and-new-website/"},   // Title
-	{"/:slug/", true, "/the-slug/"},                                 // Slug
-	{"/:filename/", true, "/test-page/"},                            // Filename
-	{"/:06-:1-:2-:Monday", true, "/12-4-6-Friday"},                  // Dates with Go formatting
-	{"/:2006_01_02_15_04_05.000", true, "/2012_04_06_03_01_59.000"}, // Complicated custom date format
-	{"/:sections/", true, "/a/b/c/"},                                // Sections
-	{"/:sections[last]/", true, "/c/"},                              // Sections
-
+	{":title", true, nil, "spf13-vim-3.0-release-and-new-website"},
+	{"/:year-:month-:title", true, nil, "/2012-04-spf13-vim-3.0-release-and-new-website"},
+	{"/:year/:yearday/:month/:monthname/:day/:weekday/:weekdayname/", true, nil, "/2012/97/04/April/06/5/Friday/"}, // Dates
+	{"/:section/", true, nil, "/blue/"},                                                                            // Section
+	{"/:title/", true, nil, "/spf13-vim-3.0-release-and-new-website/"},                                             // Title
+	{"/:slug/", true, nil, "/the-slug/"},                                                                           // Slug
+	{"/:slugorfilename/", true, nil, "/the-slug/"},                                                                 // Slug or filename
+	{"/:filename/", true, nil, "/test-page/"},                                                                      // Filename
+	{"/:06-:1-:2-:Monday", true, nil, "/12-4-6-Friday"},                                                            // Dates with Go formatting
+	{"/:2006_01_02_15_04_05.000", true, nil, "/2012_04_06_03_01_59.000"},                                           // Complicated custom date format
+	{"/:sections/", true, nil, "/a/b/c/"},                                                                          // Sections
+	{"/:sections[last]/", true, nil, "/c/"},                                                                        // Sections
+	{"/:sections[0]/:sections[last]/", true, nil, "/a/c/"},                                                         // Sections
+	{"/\\:filename", true, nil, "/:filename"},                                                                      // Escape sequence
+	{"/special\\::slug/", true, nil, "/special:the-slug/"},
+	// contentbasename.                                                      // Escape sequence
+	{"/:contentbasename/", true, nil, "/test-page/"},
+	// slug, contentbasename.                                               // Content base name
+	{"/:slugorcontentbasename/", true, func(p *testPage) {
+		p.slug = ""
+	}, "/test-page/"},
+	{"/:slugorcontentbasename/", true, func(p *testPage) {
+		p.slug = "myslug"
+	}, "/myslug/"},
+	{"/:slugorcontentbasename/", true, func(p *testPage) {
+		p.slug = ""
+		p.title = "mytitle"
+		p.file = source.NewContentFileInfoFrom("/", "_index.md")
+	}, "/test-page/"},
+	// slug, title.                                                         // Section slug
+	{"/:sectionslug/", true, func(p *testPage) {
+		p.currentSection = &testPage{slug: "my-slug"}
+	}, "/my-slug/"},
+	// slug, title.                                                         // Section slugs
+	{"/:sectionslugs/", true, func(p *testPage) {
+		// Set up current section with ancestors
+		currentSection := &testPage{
+			slug: "c-slug",
+			kind: "section",
+			ancestors: Pages{
+				&testPage{slug: "b-slug", kind: "section"},
+				&testPage{slug: "a-slug", kind: "section"},
+			},
+		}
+		p.currentSection = currentSection
+	}, "/a-slug/b-slug/c-slug/"},
+	// slice: slug, title.
+	{"/:sectionslugs[0]/:sectionslugs[last]/", true, func(p *testPage) {
+		currentSection := &testPage{
+			slug: "c-slug",
+			kind: "section",
+			ancestors: Pages{
+				&testPage{slug: "b-slug", kind: "section"},
+				&testPage{slug: "a-slug", kind: "section"},
+			},
+		}
+		p.currentSection = currentSection
+	}, "/a-slug/c-slug/"},
+	// slice: slug, title.
+	{"/:sectionslugs[last]/", true, func(p *testPage) {
+		currentSection := &testPage{
+			slug: "c-slug",
+			kind: "section",
+			ancestors: Pages{
+				&testPage{slug: "b-slug", kind: "section"},
+				&testPage{slug: "a-slug", kind: "section"},
+			},
+		}
+		p.currentSection = currentSection
+	}, "/c-slug/"},
 	// Failures
-	{"/blog/:fred", false, ""},
-	{"/:year//:title", false, ""},
-	{"/:TITLE", false, ""},      // case is not normalized
-	{"/:2017", false, ""},       // invalid date format
-	{"/:2006-01-02", false, ""}, // valid date format but invalid attribute name
+	{"/blog/:fred", false, nil, ""},
+	{"/:year//:title", false, nil, ""},
+	{"/:TITLE", false, nil, ""},      // case is not normalized
+	{"/:2017", false, nil, ""},       // invalid date format
+	{"/:2006-01-02", false, nil, ""}, // valid date format but invalid attribute name
+}
+
+func urlize(uri string) string {
+	// This is just an approximation of the real urlize function.
+	return strings.ToLower(strings.ReplaceAll(uri, " ", "-"))
 }
 
 func TestPermalinkExpansion(t *testing.T) {
@@ -55,34 +121,42 @@ func TestPermalinkExpansion(t *testing.T) {
 
 	c := qt.New(t)
 
-	page := newTestPageWithFile("/test-page/index.md")
-	page.title = "Spf13 Vim 3.0 Release and new website"
-	d, _ := time.Parse("2006-01-02 15:04:05", "2012-04-06 03:01:59")
-	page.date = d
-	page.section = "blue"
-	page.slug = "The Slug"
+	newPage := func() *testPage {
+		page := newTestPageWithFile("/test-page/index.md")
+		page.title = "Spf13 Vim 3.0 Release and new website"
+		d, _ := time.Parse("2006-01-02 15:04:05", "2012-04-06 03:01:59")
+		page.date = d
+		page.section = "blue"
+		page.slug = "The Slug"
+		page.kind = "page"
+		page.path = "/posts/test-page"
+		return page
+	}
 
-	for _, item := range testdataPermalinks {
+	for i, item := range testdataPermalinks {
 		if !item.valid {
 			continue
 		}
 
+		page := newPage()
+		if item.withPage != nil {
+			item.withPage(page)
+		}
+
 		specNameCleaner := regexp.MustCompile(`[\:\/\[\]]`)
-		name := specNameCleaner.ReplaceAllString(item.spec, "")
+		name := fmt.Sprintf("[%d] %s", i, specNameCleaner.ReplaceAllString(item.spec, "_"))
 
 		c.Run(name, func(c *qt.C) {
-
-			permalinksConfig := map[string]string{
-				"posts": item.spec,
+			configs := PermalinksConfig{
+				{Target: PageMatcher{Kind: "page", Path: "/posts/**"}, Pattern: item.spec},
 			}
-
-			ps := newTestPathSpec()
-			ps.Cfg.Set("permalinks", permalinksConfig)
-
-			expander, err := NewPermalinkExpander(ps)
+			expander, err := NewPermalinkExpander(urlize, configs)
 			c.Assert(err, qt.IsNil)
+			expanded, err := expander.Expand(page)
+			c.Assert(err, qt.IsNil)
+			c.Assert(expanded, qt.Equals, item.expandsTo)
 
-			expanded, err := expander.Expand("posts", page)
+			expanded, err = expander.ExpandPattern(item.spec, page)
 			c.Assert(err, qt.IsNil)
 			c.Assert(expanded, qt.Equals, item.expandsTo)
 		})
@@ -101,25 +175,91 @@ func TestPermalinkExpansionMultiSection(t *testing.T) {
 	page.date = d
 	page.section = "blue"
 	page.slug = "The Slug"
+	page.kind = "page"
+	page.path = "/posts/my-page"
 
-	permalinksConfig := map[string]string{
-		"posts": "/:slug",
-		"blog":  "/:section/:year",
+	pageSlugFallback := newTestPageWithFile("/page-filename/index.md")
+	pageSlugFallback.title = "Page Title"
+	pageSlugFallback.kind = "page"
+
+	configs := PermalinksConfig{
+		{Target: PageMatcher{Kind: "page", Path: "/posts/**"}, Pattern: "/:slug"},
+		{Target: PageMatcher{Kind: "page", Path: "/blog/**"}, Pattern: "/:section/:year"},
+		{Target: PageMatcher{Kind: "page", Path: "/recipes/**"}, Pattern: "/:slugorfilename"},
+		{Target: PageMatcher{Kind: "page", Path: "/special/**"}, Pattern: "/special\\::slug"},
 	}
-
-	ps := newTestPathSpec()
-	ps.Cfg.Set("permalinks", permalinksConfig)
-
-	expander, err := NewPermalinkExpander(ps)
+	expander, err := NewPermalinkExpander(urlize, configs)
 	c.Assert(err, qt.IsNil)
 
-	expanded, err := expander.Expand("posts", page)
+	expanded, err := expander.Expand(page)
 	c.Assert(err, qt.IsNil)
 	c.Assert(expanded, qt.Equals, "/the-slug")
 
-	expanded, err = expander.Expand("blog", page)
+	page.path = "/blog/my-page"
+	expanded, err = expander.Expand(page)
 	c.Assert(err, qt.IsNil)
 	c.Assert(expanded, qt.Equals, "/blue/2012")
+
+	pageSlugFallback.path = "/posts/my-page"
+	expanded, err = expander.Expand(pageSlugFallback)
+	c.Assert(err, qt.IsNil)
+	c.Assert(expanded, qt.Equals, "/page-title")
+
+	pageSlugFallback.path = "/recipes/my-page"
+	expanded, err = expander.Expand(pageSlugFallback)
+	c.Assert(err, qt.IsNil)
+	c.Assert(expanded, qt.Equals, "/page-filename")
+
+	page.path = "/special/my-page"
+	expanded, err = expander.Expand(page)
+	c.Assert(err, qt.IsNil)
+	c.Assert(expanded, qt.Equals, "/special:the-slug")
+}
+
+// https://github.com/gohugoio/hugo/issues/3577
+func TestPermalinkExpansionTitleSlash(t *testing.T) {
+	t.Parallel()
+
+	c := qt.New(t)
+
+	configs := PermalinksConfig{
+		{Target: PageMatcher{Kind: "page"}, Pattern: "/:slug/"},
+		{Target: PageMatcher{Kind: "term"}, Pattern: "/:slug/"},
+	}
+	expander, err := NewPermalinkExpander(urlize, configs)
+	c.Assert(err, qt.IsNil)
+
+	// A page with no explicit slug and a title containing a "/" must not
+	// silently introduce an extra, unintended path segment.
+	page := newTestPage()
+	page.kind = "page"
+	page.title = "Watch/listen to this"
+	page.slug = ""
+
+	expanded, err := expander.Expand(page)
+	c.Assert(err, qt.IsNil)
+	c.Assert(expanded, qt.Equals, "/watch-listen-to-this/")
+
+	// An explicit slug is left as-is; the user is in control of it.
+	pageWithSlug := newTestPage()
+	pageWithSlug.kind = "page"
+	pageWithSlug.slug = "explicit/slug"
+
+	expanded, err = expander.Expand(pageWithSlug)
+	c.Assert(err, qt.IsNil)
+	c.Assert(expanded, qt.Equals, "/explicit/slug/")
+
+	// Taxonomy term pages are allowed to preserve "/" in their title
+	// (the term itself) to build multi-level taxonomy hierarchies.
+	// See https://github.com/gohugoio/hugo/issues/5571.
+	term := newTestPage()
+	term.kind = "term"
+	term.title = "country/region/city"
+	term.slug = ""
+
+	expanded, err = expander.Expand(term)
+	c.Assert(err, qt.IsNil)
+	c.Assert(expanded, qt.Equals, "/country/region/city/")
 }
 
 func TestPermalinkExpansionConcurrent(t *testing.T) {
@@ -127,14 +267,11 @@ func TestPermalinkExpansionConcurrent(t *testing.T) {
 
 	c := qt.New(t)
 
-	permalinksConfig := map[string]string{
-		"posts": "/:slug/",
+	configs := PermalinksConfig{
+		{Target: PageMatcher{Kind: "page", Path: "/posts/**"}, Pattern: "/:slug/"},
 	}
 
-	ps := newTestPathSpec()
-	ps.Cfg.Set("permalinks", permalinksConfig)
-
-	expander, err := NewPermalinkExpander(ps)
+	expander, err := NewPermalinkExpander(urlize, configs)
 	c.Assert(err, qt.IsNil)
 
 	var wg sync.WaitGroup
@@ -144,9 +281,11 @@ func TestPermalinkExpansionConcurrent(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			page := newTestPage()
+			page.kind = "page"
+			page.path = "/posts/my-page"
 			for j := 1; j < 20; j++ {
 				page.slug = fmt.Sprintf("slug%d", i+j)
-				expanded, err := expander.Expand("posts", page)
+				expanded, err := expander.Expand(page)
 				c.Assert(err, qt.IsNil)
 				c.Assert(expanded, qt.Equals, fmt.Sprintf("/%s/", page.slug))
 			}
@@ -160,40 +299,47 @@ func TestPermalinkExpansionSliceSyntax(t *testing.T) {
 	t.Parallel()
 
 	c := qt.New(t)
-	exp, _ := NewPermalinkExpander(newTestPathSpec())
-	slice := []string{"a", "b", "c", "d"}
-	fn := func(s string) []string {
-		return exp.toSliceFunc(s)(slice)
+	exp, err := NewPermalinkExpander(urlize, PermalinksConfig{})
+	c.Assert(err, qt.IsNil)
+	slice4 := []string{"a", "b", "c", "d"}
+	fn4 := func(s string) []string {
+		return exp.toSliceFunc(s)(slice4)
+	}
+
+	slice1 := []string{"a"}
+	fn1 := func(s string) []string {
+		return exp.toSliceFunc(s)(slice1)
 	}
 
 	c.Run("Basic", func(c *qt.C) {
-		c.Assert(fn("[1:3]"), qt.DeepEquals, []string{"b", "c"})
-		c.Assert(fn("[1:]"), qt.DeepEquals, []string{"b", "c", "d"})
-		c.Assert(fn("[:2]"), qt.DeepEquals, []string{"a", "b"})
-		c.Assert(fn("[0:2]"), qt.DeepEquals, []string{"a", "b"})
-		c.Assert(fn("[:]"), qt.DeepEquals, []string{"a", "b", "c", "d"})
-		c.Assert(fn(""), qt.DeepEquals, []string{"a", "b", "c", "d"})
-		c.Assert(fn("[last]"), qt.DeepEquals, []string{"d"})
-		c.Assert(fn("[:last]"), qt.DeepEquals, []string{"a", "b", "c"})
-
+		c.Assert(fn4("[1:3]"), qt.DeepEquals, []string{"b", "c"})
+		c.Assert(fn4("[1:]"), qt.DeepEquals, []string{"b", "c", "d"})
+		c.Assert(fn4("[:2]"), qt.DeepEquals, []string{"a", "b"})
+		c.Assert(fn4("[0:2]"), qt.DeepEquals, []string{"a", "b"})
+		c.Assert(fn4("[:]"), qt.DeepEquals, []string{"a", "b", "c", "d"})
+		c.Assert(fn4(""), qt.DeepEquals, []string{"a", "b", "c", "d"})
+		c.Assert(fn4("[last]"), qt.DeepEquals, []string{"d"})
+		c.Assert(fn4("[:last]"), qt.DeepEquals, []string{"a", "b", "c"})
+		c.Assert(fn1("[last]"), qt.DeepEquals, []string{"a"})
+		c.Assert(fn1("[:last]"), qt.DeepEquals, []string{})
+		c.Assert(fn1("[1:last]"), qt.DeepEquals, []string{})
+		c.Assert(fn1("[1]"), qt.DeepEquals, []string{})
 	})
 
 	c.Run("Out of bounds", func(c *qt.C) {
-		c.Assert(fn("[1:5]"), qt.DeepEquals, []string{"b", "c", "d"})
-		c.Assert(fn("[-1:5]"), qt.DeepEquals, []string{"a", "b", "c", "d"})
-		c.Assert(fn("[5:]"), qt.DeepEquals, []string{})
-		c.Assert(fn("[5:]"), qt.DeepEquals, []string{})
-		c.Assert(fn("[5:32]"), qt.DeepEquals, []string{})
+		c.Assert(fn4("[1:5]"), qt.DeepEquals, []string{"b", "c", "d"})
+		c.Assert(fn4("[-1:5]"), qt.DeepEquals, []string{"a", "b", "c", "d"})
+		c.Assert(fn4("[5:]"), qt.DeepEquals, []string{})
+		c.Assert(fn4("[5:]"), qt.DeepEquals, []string{})
+		c.Assert(fn4("[5:32]"), qt.DeepEquals, []string{})
 		c.Assert(exp.toSliceFunc("[:1]")(nil), qt.DeepEquals, []string(nil))
 		c.Assert(exp.toSliceFunc("[:1]")([]string{}), qt.DeepEquals, []string(nil))
 
 		// These all return nil
-		c.Assert(fn("[]"), qt.IsNil)
-		c.Assert(fn("[1:}"), qt.IsNil)
-		c.Assert(fn("foo"), qt.IsNil)
-
+		c.Assert(fn4("[]"), qt.IsNil)
+		c.Assert(fn4("[1:}"), qt.IsNil)
+		c.Assert(fn4("foo"), qt.IsNil)
 	})
-
 }
 
 func BenchmarkPermalinkExpand(b *testing.B) {
@@ -201,22 +347,19 @@ func BenchmarkPermalinkExpand(b *testing.B) {
 	page.title = "Hugo Rocks"
 	d, _ := time.Parse("2006-01-02", "2019-02-28")
 	page.date = d
+	page.kind = "page"
+	page.path = "/posts/my-page"
 
-	permalinksConfig := map[string]string{
-		"posts": "/:year-:month-:title",
+	configs := PermalinksConfig{
+		{Target: PageMatcher{Kind: "page", Path: "/posts/**"}, Pattern: "/:year-:month-:title"},
 	}
-
-	ps := newTestPathSpec()
-	ps.Cfg.Set("permalinks", permalinksConfig)
-
-	expander, err := NewPermalinkExpander(ps)
+	expander, err := NewPermalinkExpander(urlize, configs)
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		s, err := expander.Expand("posts", page)
+	for b.Loop() {
+		s, err := expander.Expand(page)
 		if err != nil {
 			b.Fatal(err)
 		}

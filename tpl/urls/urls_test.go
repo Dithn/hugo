@@ -15,27 +15,29 @@ package urls
 
 import (
 	"net/url"
+	"regexp"
 	"testing"
 
-	"github.com/gohugoio/hugo/config"
-
+	"github.com/gohugoio/hugo/config/testconfig"
 	"github.com/gohugoio/hugo/htesting/hqt"
 
 	qt "github.com/frankban/quicktest"
-	"github.com/gohugoio/hugo/deps"
 )
 
-var ns = New(&deps.Deps{Cfg: config.New()})
+func newNs() *Namespace {
+	return New(testconfig.GetTestDeps(nil, nil))
+}
 
 type tstNoStringer struct{}
 
 func TestParse(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
+	ns := newNs()
 
 	for _, test := range []struct {
-		rawurl interface{}
-		expect interface{}
+		rawurl any
+		expect any
 	}{
 		{
 			"http://www.google.com",
@@ -66,5 +68,137 @@ func TestParse(t *testing.T) {
 		c.Assert(err, qt.IsNil)
 		c.Assert(result,
 			qt.CmpEquals(hqt.DeepAllowUnexported(&url.URL{}, url.Userinfo{})), test.expect)
+	}
+}
+
+func TestJoinPath(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+	ns := newNs()
+
+	for _, test := range []struct {
+		elements any
+		expect   any
+	}{
+		{"", `/`},
+		{"a", `a`},
+		{"/a/b", `/a/b`},
+		{"./../a/b", `a/b`},
+		{[]any{""}, `/`},
+		{[]any{"a"}, `a`},
+		{[]any{"/a", "b"}, `/a/b`},
+		{[]any{".", "..", "/a", "b"}, `a/b`},
+		{[]any{"https://example.org", "a"}, `https://example.org/a`},
+		{[]any{nil}, `/`},
+		// Empty slices. See issue 15473.
+		{[]any{}, ""},
+		{[]string{}, ""},
+		// errors
+		{tstNoStringer{}, false},
+		{[]any{tstNoStringer{}}, false},
+	} {
+
+		result, err := ns.JoinPath(test.elements)
+
+		if b, ok := test.expect.(bool); ok && !b {
+			c.Assert(err, qt.Not(qt.IsNil))
+			continue
+		}
+
+		c.Assert(err, qt.IsNil)
+		c.Assert(result, qt.Equals, test.expect)
+	}
+
+	// Test variadic slice combinations. See issue 15473.
+	for _, test := range []struct {
+		elements []any
+		expect   string
+	}{
+		{[]any{[]any{}, []string{}}, ""},
+		{[]any{[]any{}, "a", []string{}}, "a"},
+		{[]any{[]string{}, []any{"a", "b"}, "c"}, "a/b/c"},
+	} {
+		result, err := ns.JoinPath(test.elements...)
+		c.Assert(err, qt.IsNil)
+		c.Assert(result, qt.Equals, test.expect)
+	}
+}
+
+func TestPathEscape(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+	ns := newNs()
+
+	tests := []struct {
+		name     string
+		input    any
+		want     string
+		wantErr  bool
+		errCheck string
+	}{
+		{"string", "A/b/c?d=é&f=g+h", "A%2Fb%2Fc%3Fd=%C3%A9&f=g+h", false, ""},
+		{"empty string", "", "", false, ""},
+		{"integer", 6, "6", false, ""},
+		{"float", 7.42, "7.42", false, ""},
+		{"nil", nil, "", false, ""},
+		{"slice", []int{}, "", true, "unable to cast"},
+		{"map", map[string]string{}, "", true, "unable to cast"},
+		{"struct", tstNoStringer{}, "", true, "unable to cast"},
+	}
+
+	for _, tt := range tests {
+		c.Run(tt.name, func(c *qt.C) {
+			got, err := ns.PathEscape(tt.input)
+			if tt.wantErr {
+				c.Assert(err, qt.IsNotNil, qt.Commentf("PathEscape(%v) should have failed", tt.input))
+				if tt.errCheck != "" {
+					c.Assert(err, qt.ErrorMatches, ".*"+regexp.QuoteMeta(tt.errCheck)+".*")
+				}
+			} else {
+				c.Assert(err, qt.IsNil)
+				c.Assert(got, qt.Equals, tt.want)
+			}
+		})
+	}
+}
+
+func TestPathUnescape(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+	ns := newNs()
+
+	tests := []struct {
+		name     string
+		input    any
+		want     string
+		wantErr  bool
+		errCheck string
+	}{
+		{"string", "A%2Fb%2Fc%3Fd=%C3%A9&f=g+h", "A/b/c?d=é&f=g+h", false, ""},
+		{"empty string", "", "", false, ""},
+		{"integer", 6, "6", false, ""},
+		{"float", 7.42, "7.42", false, ""},
+		{"nil", nil, "", false, ""},
+		{"slice", []int{}, "", true, "unable to cast"},
+		{"map", map[string]string{}, "", true, "unable to cast"},
+		{"struct", tstNoStringer{}, "", true, "unable to cast"},
+		{"malformed hex", "bad%g0escape", "", true, "invalid URL escape"},
+		{"incomplete hex", "trailing%", "", true, "invalid URL escape"},
+		{"single hex digit", "trail%1", "", true, "invalid URL escape"},
+	}
+
+	for _, tt := range tests {
+		c.Run(tt.name, func(c *qt.C) {
+			got, err := ns.PathUnescape(tt.input)
+			if tt.wantErr {
+				c.Assert(err, qt.Not(qt.IsNil), qt.Commentf("PathUnescape(%v) should have failed", tt.input))
+				if tt.errCheck != "" {
+					c.Assert(err, qt.ErrorMatches, ".*"+regexp.QuoteMeta(tt.errCheck)+".*")
+				}
+			} else {
+				c.Assert(err, qt.IsNil)
+				c.Assert(got, qt.Equals, tt.want)
+			}
+		})
 	}
 }

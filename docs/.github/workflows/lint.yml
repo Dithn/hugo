@@ -1,0 +1,60 @@
+name: Lint
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  markdownlint:
+    name: Lint Markdown
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Run Markdown linter
+      uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0
+      with:
+        globs: # set to null to override default of *.{md,markdown}
+
+  spellcheck:
+    name: Check spelling
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Check spelling with cspell
+      uses: streetsidesoftware/cspell-action@6f3c77c1406bc930f944ba97e9801a22e42caf58 # v9.1.0
+      with:
+        incremental_files_only: true
+        strict: true
+        # cspell uses the .cspell.jsonc configuration file
+    - name: Check spelling with codespell
+      uses: codespell-project/actions-codespell@e3258cca84ce02b0bb36a3d41f2c18f719a0cc1a # v2.4.3
+      with:
+        check_hidden: true
+        # codespell uses the .codespellrc file
+
+  template-formatting:
+    name: Check template formatting
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Install Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: "1.27"
+        check-latest: true
+        cache: true
+        cache-dependency-path: |
+          **/go.sum
+          **/go.mod
+    - name: Install gotmplfmt
+      run: go install github.com/gohugoio/gotmplfmt@9aa02f78b401685c026c3184c4dd45cecfcc9161 # v0.5.0
+    - name: Check template formatting
+      run: "diff <(gotmplfmt -d layouts) <(printf '')"

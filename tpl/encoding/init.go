@@ -14,6 +14,8 @@
 package encoding
 
 import (
+	"context"
+
 	"github.com/gohugoio/hugo/deps"
 	"github.com/gohugoio/hugo/tpl/internal"
 )
@@ -26,7 +28,7 @@ func init() {
 
 		ns := &internal.TemplateFuncsNamespace{
 			Name:    name,
-			Context: func(args ...interface{}) (interface{}, error) { return ctx, nil },
+			Context: func(cctx context.Context, args ...any) (any, error) { return ctx, nil },
 		}
 
 		ns.AddMethodMapping(ctx.Base64Decode,
@@ -41,6 +43,20 @@ func init() {
 			[]string{"base64Encode"},
 			[][2]string{
 				{`{{ "Hello world" | base64Encode }}`, `SGVsbG8gd29ybGQ=`},
+			},
+		)
+
+		ns.AddMethodMapping(ctx.HexDecode,
+			nil,
+			[][2]string{
+				{`{{ "48656c6c6f20776f726c64" | encoding.HexDecode }}`, `Hello world`},
+			},
+		)
+
+		ns.AddMethodMapping(ctx.HexEncode,
+			nil,
+			[][2]string{
+				{`{{ "Hello world" | encoding.HexEncode }}`, `48656c6c6f20776f726c64`},
 			},
 		)
 

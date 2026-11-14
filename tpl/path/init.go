@@ -14,6 +14,7 @@
 package path
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -29,15 +30,32 @@ func init() {
 
 		ns := &internal.TemplateFuncsNamespace{
 			Name:    name,
-			Context: func(args ...interface{}) (interface{}, error) { return ctx, nil },
+			Context: func(cctx context.Context, args ...any) (any, error) { return ctx, nil },
 		}
 
-		ns.AddMethodMapping(ctx.Split,
+		ns.AddMethodMapping(ctx.Base,
 			nil,
-			[][2]string{
-				{`{{ "/my/path/filename.txt" | path.Split }}`, `/my/path/|filename.txt`},
-				{fmt.Sprintf(`{{ %q | path.Split }}`, filepath.FromSlash("/my/path/filename.txt")), `/my/path/|filename.txt`},
-			},
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.BaseName,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.Clean,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.Dir,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.Ext,
+			nil,
+			[][2]string{},
 		)
 
 		testDir := filepath.Join("my", "path")
@@ -46,11 +64,19 @@ func init() {
 		ns.AddMethodMapping(ctx.Join,
 			nil,
 			[][2]string{
-				{fmt.Sprintf(`{{ slice %q "filename.txt" | path.Join  }}`, testDir), `my/path/filename.txt`},
-				{`{{  path.Join "my" "path" "filename.txt" }}`, `my/path/filename.txt`},
-				{fmt.Sprintf(`{{ %q | path.Ext  }}`, testFile), `.txt`},
-				{fmt.Sprintf(`{{ %q | path.Base  }}`, testFile), `filename.txt`},
-				{fmt.Sprintf(`{{ %q | path.Dir  }}`, testFile), `my/path`},
+				{fmt.Sprintf(`{{ slice %q "filename.txt" | path.Join }}`, testDir), `my/path/filename.txt`},
+				{`{{ path.Join "my" "path" "filename.txt" }}`, `my/path/filename.txt`},
+				{fmt.Sprintf(`{{ %q | path.Ext }}`, testFile), `.txt`},
+				{fmt.Sprintf(`{{ %q | path.Base }}`, testFile), `filename.txt`},
+				{fmt.Sprintf(`{{ %q | path.Dir }}`, testFile), `my/path`},
+			},
+		)
+
+		ns.AddMethodMapping(ctx.Split,
+			nil,
+			[][2]string{
+				{`{{ "/my/path/filename.txt" | path.Split }}`, `/my/path/|filename.txt`},
+				{fmt.Sprintf(`{{ %q | path.Split }}`, filepath.FromSlash("/my/path/filename.txt")), `/my/path/|filename.txt`},
 			},
 		)
 

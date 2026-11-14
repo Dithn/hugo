@@ -17,35 +17,22 @@ import (
 	"errors"
 	"html"
 	"html/template"
-	"regexp"
+	"slices"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/gohugoio/hugo/common/hhtml"
 	"github.com/spf13/cast"
 )
 
-var (
-	tagRE        = regexp.MustCompile(`^<(/)?([^ ]+?)(?:(\s*/)| .*?)?>`)
-	htmlSinglets = map[string]bool{
-		"br": true, "col": true, "link": true,
-		"base": true, "img": true, "param": true,
-		"area": true, "hr": true, "input": true,
-	}
-)
-
-type htmlTag struct {
-	name    string
-	pos     int
-	openTag bool
-}
-
-// Truncate truncates a given string to the specified length.
-func (ns *Namespace) Truncate(a interface{}, options ...interface{}) (template.HTML, error) {
-	length, err := cast.ToIntE(a)
+// Truncate truncates the string in s to the specified length.
+func (ns *Namespace) Truncate(s any, options ...any) (template.HTML, error) {
+	length, err := cast.ToIntE(s)
 	if err != nil {
 		return "", err
 	}
-	var textParam interface{}
+	var textParam any
 	var ellipsis string
 
 	switch len(options) {
@@ -66,9 +53,7 @@ func (ns *Namespace) Truncate(a interface{}, options ...interface{}) (template.H
 	default:
 		return "", errors.New("too many arguments passed to truncate")
 	}
-	if err != nil {
-		return "", errors.New("text to truncate must be a string")
-	}
+
 	text, err := cast.ToStringE(textParam)
 	if err != nil {
 		return "", errors.New("text must be a string")
@@ -83,75 +68,92 @@ func (ns *Namespace) Truncate(a interface{}, options ...interface{}) (template.H
 		return template.HTML(html.EscapeString(text)), nil
 	}
 
-	tags := []htmlTag{}
-	var lastWordIndex, lastNonSpace, currentLen, endTextPos, nextTag int
+	t := truncator{length: length}
 
-	for i, r := range text {
-		if i < nextTag {
-			continue
+	if !isHTML {
+		if end, ok := t.scanText(text, 0, len(text)); ok {
+			return template.HTML(html.EscapeString(text[:end]) + ellipsis), nil
 		}
+		return template.HTML(html.EscapeString(text)), nil
+	}
 
-		if isHTML {
-			// Make sure we keep tag of HTML tags
-			slice := text[i:]
-			m := tagRE.FindStringSubmatchIndex(slice)
-			if len(m) > 0 && m[0] == 0 {
-				nextTag = i + m[1]
-				tagname := slice[m[4]:m[5]]
-				lastWordIndex = lastNonSpace
-				_, singlet := htmlSinglets[tagname]
-				if !singlet && m[6] == -1 {
-					tags = append(tags, htmlTag{name: tagname, pos: i, openTag: m[2] == -1})
-				}
-
-				continue
-			}
+	sc := hhtml.NewScanner(text, 0)
+	for {
+		textStart := sc.Pos()
+		tok, ok := sc.Next(len(text))
+		textEnd := len(text)
+		if ok {
+			textEnd = tok.Start
 		}
+		if end, cut := t.scanText(text, textStart, textEnd); cut {
+			return template.HTML(truncateHTML(text, end, ellipsis)), nil
+		}
+		if !ok {
+			return template.HTML(text), nil
+		}
+		t.lastWordIndex = t.lastNonSpace
+		if tok.Type == hhtml.StartTag && !tok.SelfClosing && hhtml.IsRawTextElement(tok.Name) {
+			sc.SkipRawText(len(text), tok.Name)
+		}
+	}
+}
 
-		currentLen++
+// truncateHTML returns s[:end] followed by ellipsis and the end tags of
+// the elements left open.
+func truncateHTML(s string, end int, ellipsis string) string {
+	var buf [16]string
+	stack := buf[:0]
+	sc := hhtml.NewScanner(s, 0)
+	for {
+		tok, ok := sc.Next(end)
+		if !ok {
+			break
+		}
+		stack = hhtml.UpdateElementStack(&sc, stack, tok, end)
+	}
+
+	var b strings.Builder
+	b.WriteString(s[:end])
+	b.WriteString(ellipsis)
+	for _, name := range slices.Backward(stack) {
+		b.WriteString("</")
+		b.WriteString(name)
+		b.WriteString(">")
+	}
+	return b.String()
+}
+
+type truncator struct {
+	length        int
+	currentLen    int
+	lastWordIndex int
+	lastNonSpace  int
+}
+
+// scanText counts the runes in the text s[start:end].
+// If length is exceeded, it returns the position to cut s at and true.
+func (t *truncator) scanText(s string, start, end int) (int, bool) {
+	for i, r := range s[start:end] {
+		i += start
+		t.currentLen++
 		if unicode.IsSpace(r) {
-			lastWordIndex = lastNonSpace
+			t.lastWordIndex = t.lastNonSpace
 		} else if unicode.In(r, unicode.Han, unicode.Hangul, unicode.Hiragana, unicode.Katakana) {
-			lastWordIndex = i
+			t.lastWordIndex = t.lastNonSpace
+			t.lastNonSpace = i + utf8.RuneLen(r)
+			if t.currentLen <= t.length {
+				t.lastWordIndex = t.lastNonSpace
+			}
 		} else {
-			lastNonSpace = i + utf8.RuneLen(r)
+			t.lastNonSpace = i + utf8.RuneLen(r)
 		}
 
-		if currentLen > length {
-			if lastWordIndex == 0 {
-				endTextPos = i
-			} else {
-				endTextPos = lastWordIndex
+		if t.currentLen > t.length {
+			if t.lastWordIndex == 0 {
+				return i, true
 			}
-			out := text[0:endTextPos]
-			if isHTML {
-				out += ellipsis
-				// Close out any open HTML tags
-				var currentTag *htmlTag
-				for i := len(tags) - 1; i >= 0; i-- {
-					tag := tags[i]
-					if tag.pos >= endTextPos || currentTag != nil {
-						if currentTag != nil && currentTag.name == tag.name {
-							currentTag = nil
-						}
-						continue
-					}
-
-					if tag.openTag {
-						out += ("</" + tag.name + ">")
-					} else {
-						currentTag = &tag
-					}
-				}
-
-				return template.HTML(out), nil
-			}
-			return template.HTML(html.EscapeString(out) + ellipsis), nil
+			return t.lastWordIndex, true
 		}
 	}
-
-	if isHTML {
-		return template.HTML(text), nil
-	}
-	return template.HTML(html.EscapeString(text)), nil
+	return 0, false
 }

@@ -30,8 +30,8 @@ func TestBase64Decode(t *testing.T) {
 	ns := New()
 
 	for _, test := range []struct {
-		v      interface{}
-		expect interface{}
+		v      any
+		expect any
 	}{
 		{"YWJjMTIzIT8kKiYoKSctPUB+", "abc123!?$*&()'-=@~"},
 		// errors
@@ -57,8 +57,8 @@ func TestBase64Encode(t *testing.T) {
 	ns := New()
 
 	for _, test := range []struct {
-		v      interface{}
-		expect interface{}
+		v      any
+		expect any
 	}{
 		{"YWJjMTIzIT8kKiYoKSctPUB+", "WVdKak1USXpJVDhrS2lZb0tTY3RQVUIr"},
 		// errors
@@ -77,27 +77,84 @@ func TestBase64Encode(t *testing.T) {
 	}
 }
 
+func TestHexDecode(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+
+	ns := New()
+
+	for _, test := range []struct {
+		v      any
+		expect any
+	}{
+		{"616263313233213f242a2628292d3d407e", "abc123!?$*&()-=@~"},
+		// errors
+		{t, false},
+	} {
+
+		result, err := ns.HexDecode(test.v)
+
+		if b, ok := test.expect.(bool); ok && !b {
+			c.Assert(err, qt.Not(qt.IsNil))
+			continue
+		}
+
+		c.Assert(err, qt.IsNil)
+		c.Assert(result, qt.Equals, test.expect)
+	}
+}
+
+func TestHexEncode(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+
+	ns := New()
+
+	for _, test := range []struct {
+		v      any
+		expect any
+	}{
+		{"abc123!?$*&()-=@~", "616263313233213f242a2628292d3d407e"},
+		// errors
+		{t, false},
+	} {
+
+		result, err := ns.HexEncode(test.v)
+
+		if b, ok := test.expect.(bool); ok && !b {
+			c.Assert(err, qt.Not(qt.IsNil))
+			continue
+		}
+
+		c.Assert(err, qt.IsNil)
+		c.Assert(result, qt.Equals, test.expect)
+	}
+}
+
 func TestJsonify(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 	ns := New()
 
-	for _, test := range []struct {
-		opts   interface{}
-		v      interface{}
-		expect interface{}
+	for i, test := range []struct {
+		opts   any
+		v      any
+		expect any
 	}{
 		{nil, []string{"a", "b"}, template.HTML(`["a","b"]`)},
 		{map[string]string{"indent": "<i>"}, []string{"a", "b"}, template.HTML("[\n<i>\"a\",\n<i>\"b\"\n]")},
 		{map[string]string{"prefix": "<p>"}, []string{"a", "b"}, template.HTML("[\n<p>\"a\",\n<p>\"b\"\n<p>]")},
 		{map[string]string{"prefix": "<p>", "indent": "<i>"}, []string{"a", "b"}, template.HTML("[\n<p><i>\"a\",\n<p><i>\"b\"\n<p>]")},
+		{map[string]string{"indent": "<i>"}, []string{"a", "b"}, template.HTML("[\n<i>\"a\",\n<i>\"b\"\n]")},
+		{map[string]any{"noHTMLEscape": false}, []string{"<a>", "<b>"}, template.HTML("[\"\\u003ca\\u003e\",\"\\u003cb\\u003e\"]")},
+		{map[string]any{"noHTMLEscape": true}, []string{"<a>", "<b>"}, template.HTML("[\"<a>\",\"<b>\"]")},
 		{nil, tstNoStringer{}, template.HTML("{}")},
 		{nil, nil, template.HTML("null")},
 		// errors
 		{nil, math.NaN(), false},
 		{tstNoStringer{}, []string{"a", "b"}, false},
 	} {
-		args := []interface{}{}
+		args := []any{}
 
 		if test.opts != nil {
 			args = append(args, test.opts)
@@ -108,11 +165,11 @@ func TestJsonify(t *testing.T) {
 		result, err := ns.Jsonify(args...)
 
 		if b, ok := test.expect.(bool); ok && !b {
-			c.Assert(err, qt.Not(qt.IsNil))
+			c.Assert(err, qt.Not(qt.IsNil), qt.Commentf("#%d", i))
 			continue
 		}
 
 		c.Assert(err, qt.IsNil)
-		c.Assert(result, qt.Equals, test.expect)
+		c.Assert(result, qt.Equals, test.expect, qt.Commentf("#%d", i))
 	}
 }

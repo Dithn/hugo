@@ -1,0 +1,340 @@
+// Copyright 2024 The Hugo Authors. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package images_test
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/bep/logg"
+	"github.com/gohugoio/hugo/htesting"
+	"github.com/gohugoio/hugo/hugolib"
+)
+
+func TestAutoOrient(t *testing.T) {
+	files := `
+-- hugo.toml --
+-- assets/rotate270.jpg --
+sourcefilename: ../testdata/exif/orientation6.jpg
+-- layouts/home.html --
+{{ $img := resources.Get "rotate270.jpg" }}
+W/H original: {{ $img.Width }}/{{ $img.Height }}
+{{ $rotated := $img.Filter images.AutoOrient }}
+W/H rotated: {{ $rotated.Width }}/{{ $rotated.Height }}
+`
+
+	b := hugolib.Test(t, files)
+	b.AssertFileContent("public/index.html", "W/H original: 80/40\n\nW/H rotated: 40/80")
+}
+
+// Issue 12733.
+func TestOrientationEq(t *testing.T) {
+	files := `
+-- hugo.toml --
+-- assets/rotate270.jpg --
+sourcefilename: ../testdata/exif/orientation6.jpg
+-- layouts/home.html --
+{{ $img := resources.Get "rotate270.jpg" }}
+{{ $orientation := $img.Meta.Orientation }}
+Orientation: {{ $orientation }}|eq 6: {{ eq $orientation 6 }}|Type: {{ printf "%T" $orientation }}|
+`
+
+	b := hugolib.Test(t, files)
+	b.AssertFileContent("public/index.html", "Orientation: 6|eq 6: true|")
+}
+
+func TestColorsIssue14453(t *testing.T) {
+	// Go changed their JPEG implementation in Go 1.26, so we cannot run this test on earlier versions. See https://go.dev/doc/go1.26#imagejpegpkgimagejpeg
+	if htesting.GoMinorVersion() < 26 {
+		t.Skip("Go 1.26+ required")
+	}
+	files := `
+-- hugo.toml --
+-- assets/sunset.jpg --
+sourcefilename: ../testdata/sunset.jpg
+-- layouts/home.html --
+{{ $img := resources.Get "sunset.jpg" }}
+{{ $img := $img.Fit "100x100" }}
+{{ $img := $img.Filter (slice images.AutoOrient (images.Process "fit 100x100 webp")) -}}
+{{ $colors := $img.Colors }}
+Colors: {{ $colors }}|
+`
+	tempDir := t.TempDir()
+	for range 2 {
+		b := hugolib.Test(t, files, hugolib.TestOptWithConfig(func(cfg *hugolib.IntegrationTestConfig) {
+			cfg.NeedsOsFS = true
+			cfg.WorkingDir = tempDir
+		}))
+		b.AssertFileContent("public/index.html", "Colors: [#2e2f33 #a69e94 #d29d59 #a26a3f #747c83 #7b848b]|")
+
+	}
+}
+
+func TestImageCropSmartKeepsTargetSizeIssue13688(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+disableKinds = ['page','rss','section','sitemap','taxonomy','term']
+-- assets/sunset.jpg --
+sourcefilename: ../testdata/sunset.jpg
+-- layouts/home.html --
+{{ with resources.Get "sunset.jpg" }}
+Original: {{ .Width }}x{{ .Height }}|
+{{- with .Crop "900x561 TopLeft" -}}
+CropTopLeft: {{ .Width }}x{{ .Height }}|
+{{- end -}}
+{{- with .Crop "900x561 Smart" -}}
+CropSmart: {{ .Width }}x{{ .Height }}|
+{{- end -}}
+{{ end }}
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/index.html", "Original: 900x562|CropTopLeft: 900x561|CropSmart: 900x561|")
+}
+
+func TestImagingGlobalsDeprecated(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+[imaging]
+quality = 70
+hint = "picture"
+compression = "lossless"
+-- layouts/home.html --
+Home.
+`
+
+	b := hugolib.Test(t, files, hugolib.TestOptWithConfig(func(cfg *hugolib.IntegrationTestConfig) {
+		cfg.LogLevel = logg.LevelInfo
+	}))
+
+	b.AssertLogContains(
+		"project config key imaging.quality was deprecated in Hugo v0.163.0",
+		"project config key imaging.hint was deprecated in Hugo v0.163.0",
+		"project config key imaging.compression was deprecated in Hugo v0.163.0",
+	)
+}
+
+func BenchmarkImageResize(b *testing.B) {
+	files := `
+-- content/p1/sunrise.jpg --
+sourcefilename: ../../resources/testdata/sunrise.jpg
+-- content/p1/index.md --
+-- content/p2/sunrise.jpg --
+sourcefilename: ../../resources/testdata/sunrise.jpg
+-- content/p2/index.md --
+-- content/p3/sunrise.jpg --
+sourcefilename: ../../resources/testdata/sunrise.jpg
+-- content/p3/index.md --
+-- content/p4/sunrise.jpg --
+sourcefilename: ../../resources/testdata/sunrise.jpg
+-- content/p4/index.md --
+-- content/p5/sunrise.jpg --
+sourcefilename: ../../resources/testdata/sunrise.jpg
+-- content/p5/index.md --
+-- content/p6/sunrise.jpg --
+sourcefilename: ../../resources/testdata/sunrise.jpg
+-- content/p6/index.md --
+-- content/p7/sunrise.jpg --
+sourcefilename: ../../resources/testdata/sunrise.jpg
+-- content/p7/index.md --
+-- content/p8/sunrise.jpg --
+sourcefilename: ../../resources/testdata/sunrise.jpg
+-- content/p8/index.md --
+-- content/p9/sunrise.jpg --
+sourcefilename: ../../resources/testdata/sunrise.jpg
+-- content/p9/index.md --
+-- content/p10/sunrise.jpg --
+sourcefilename: ../../resources/testdata/sunrise.jpg
+-- content/p10/index.md --
+-- layouts/home.html --
+Home.
+-- layouts/page.html --
+Page.
+{{ $image := .Resources.Get "sunrise.jpg" }}
+{{ ($image.Process "resize 200x200").Publish }}
+
+`
+
+	cfg := hugolib.IntegrationTestConfig{
+		T:           b,
+		TxtarString: files,
+	}
+
+	for b.Loop() {
+		b.StopTimer()
+		builder := hugolib.NewIntegrationTestBuilder(cfg).Init()
+		b.StartTimer()
+		builder.Build()
+	}
+}
+
+// See issue 15430.
+func TestImageFrameCount(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+-- assets/giphy.gif --
+sourcefilename: ../testdata/giphy.gif
+-- assets/pix.gif --
+sourcefilename: ../testdata/pix.gif
+-- assets/giphy.avif --
+sourcefilename: ../testdata/giphy.avif
+-- assets/anim.webp --
+sourcefilename: ../testdata/webp/anim.webp
+-- assets/sunset.webp --
+sourcefilename: ../testdata/sunset.webp
+-- assets/sunset.jpg --
+sourcefilename: ../testdata/sunset.jpg
+-- assets/gohugoio.png --
+sourcefilename: ../testdata/gohugoio.png
+-- layouts/home.html --
+{{ $giphy := resources.Get "giphy.gif" }}
+{{ $avif := resources.Get "giphy.avif" }}
+giphy.gif: {{ $giphy.FrameCount }}|
+giphy.gif resized: {{ ($giphy.Resize "10x").FrameCount }}|
+giphy.gif to webp: {{ ($giphy.Resize "10x webp").FrameCount }}|
+giphy.gif to jpg: {{ ($giphy.Resize "10x jpg").FrameCount }}|
+giphy.avif: {{ $avif.FrameCount }}|
+giphy.avif resized: {{ ($avif.Resize "10x").FrameCount }}|
+anim.webp: {{ (resources.Get "anim.webp").FrameCount }}|
+pix.gif: {{ (resources.Get "pix.gif").FrameCount }}|
+sunset.webp: {{ (resources.Get "sunset.webp").FrameCount }}|
+sunset.jpg: {{ (resources.Get "sunset.jpg").FrameCount }}|
+gohugoio.png: {{ (resources.Get "gohugoio.png").FrameCount }}|
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/index.html",
+		"giphy.gif: 14|",
+		"giphy.gif resized: 14|",
+		"giphy.gif to webp: 14|",
+		"giphy.gif to jpg: 1|",
+		"giphy.avif: 14|",
+		"giphy.avif resized: 1|",
+		"anim.webp: 17|",
+		"pix.gif: 1|",
+		"sunset.webp: 1|",
+		"sunset.jpg: 1|",
+		"gohugoio.png: 1|",
+	)
+}
+
+// See issue 15433.
+func TestImageFirstFrameOnly(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+[imaging]
+firstFrameOnly = IMAGING_FIRST_FRAME_ONLY
+-- assets/giphy.gif --
+sourcefilename: ../testdata/giphy.gif
+-- assets/anim.webp --
+sourcefilename: ../testdata/webp/anim.webp
+-- layouts/home.html --
+{{ $giphy := resources.Get "giphy.gif" }}
+{{ $webp := resources.Get "anim.webp" }}
+giphy.gif resized: {{ ($giphy.Resize "10x").FrameCount }}|
+giphy.gif processed firstFrameOnly: {{ ($giphy.Process "resize 10x firstFrameOnly").FrameCount }}|
+anim.webp resized: {{ ($webp.Resize "10x").FrameCount }}|
+anim.webp processed firstFrameOnly: {{ ($webp.Process "resize 10x firstFrameOnly").FrameCount }}|
+`
+
+	b := hugolib.Test(t, strings.ReplaceAll(files, "IMAGING_FIRST_FRAME_ONLY", "false"))
+	b.AssertFileContent("public/index.html",
+		"giphy.gif resized: 14|",
+		"giphy.gif processed firstFrameOnly: 1|",
+		"anim.webp resized: 17|",
+		"anim.webp processed firstFrameOnly: 1|",
+	)
+
+	b = hugolib.Test(t, strings.ReplaceAll(files, "IMAGING_FIRST_FRAME_ONLY", "true"))
+	b.AssertFileContent("public/index.html",
+		"giphy.gif resized: 1|",
+		"giphy.gif processed firstFrameOnly: 1|",
+		"anim.webp resized: 1|",
+		"anim.webp processed firstFrameOnly: 1|",
+	)
+}
+
+// See issue 15433.
+func TestImageAnimationMemoryLimit(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- assets/giphy.gif --
+sourcefilename: ../testdata/giphy.gif
+-- assets/anim.webp --
+sourcefilename: ../testdata/webp/anim.webp
+-- assets/giphy.avif --
+sourcefilename: ../testdata/giphy.avif
+-- layouts/home.html --
+{{ $giphy := resources.Get "giphy.gif" }}
+{{ $webp := resources.Get "anim.webp" }}
+{{ $avif := resources.Get "giphy.avif" }}
+{{ with try ($webp.Resize "10x") }}Decode: {{ .Err }}|{{ end }}
+{{ with try ($giphy.Resize "480x webp") }}Encode: {{ .Err }}|{{ end }}
+anim.webp firstFrameOnly: {{ ($webp.Resize "10x firstFrameOnly").FrameCount }}|
+anim.webp to jpg: {{ ($webp.Resize "10x jpg").FrameCount }}|
+giphy.gif to webp firstFrameOnly: {{ ($giphy.Resize "480x webp firstFrameOnly").FrameCount }}|
+giphy.avif resized: {{ ($avif.Resize "10x").FrameCount }}|
+`
+
+	b := hugolib.Test(t, files, hugolib.TestOptWithConfig(func(c *hugolib.IntegrationTestConfig) {
+		c.WarpcMemory = 8
+	}))
+
+	b.AssertFileContent("public/index.html",
+		"anim.webp: 17 frames of 500x360 need at least 11 MiB of memory, the limit is 8 MiB; consider using firstFrameOnly|",
+		"giphy.gif&#34;: 14 frames of 480x480 need at least 12 MiB of memory, the limit is 8 MiB; consider using firstFrameOnly|",
+		"anim.webp firstFrameOnly: 1|",
+		"anim.webp to jpg: 1|",
+		"giphy.gif to webp firstFrameOnly: 1|",
+		"giphy.avif resized: 1|",
+	)
+}
+
+func TestOverlayAndMaskKeyStableAcrossBuildsIssue15467(t *testing.T) {
+	files := `
+-- hugo.toml --
+disableKinds = ['page','rss','section','sitemap','taxonomy','term']
+-- assets/sunset.jpg --
+sourcefilename: ../testdata/sunset.jpg
+-- layouts/home.html --
+{{- $a := resources.Get "sunset.jpg" -}}
+{{- $s := $a.Process "resize 32x" -}}
+overlay={{ ($a | images.Filter (images.Overlay $s 0 0)).RelPermalink }}|mask={{ ($a | images.Filter (images.Mask $s)).RelPermalink }}|key={{ $s.Key }}|
+`
+	tempDir := t.TempDir()
+	var first string
+	for i := range 2 {
+		b := hugolib.Test(t, files, hugolib.TestOptWithConfig(func(cfg *hugolib.IntegrationTestConfig) {
+			cfg.NeedsOsFS = true
+			cfg.WorkingDir = tempDir
+		}))
+		content := b.FileContent("public/index.html")
+		if i == 0 {
+			first = content
+		} else if content != first {
+			t.Fatalf("output changed between builds:\nbuild 1: %s\nbuild 2: %s", first, content)
+		}
+	}
+}

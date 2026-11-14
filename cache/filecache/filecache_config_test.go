@@ -11,18 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package filecache
+package filecache_test
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/spf13/afero"
 
+	"github.com/gohugoio/hugo/cache/filecache"
 	"github.com/gohugoio/hugo/config"
+	"github.com/gohugoio/hugo/config/testconfig"
 
 	qt "github.com/frankban/quicktest"
 )
@@ -42,12 +44,9 @@ assetDir = "assets"
 archetypeDir = "archetypes"
 
 [caches]
-[caches.getJSON]
+[caches.misc]
 maxAge = "10m"
 dir = "/path/to/c1"
-[caches.getCSV]
-maxAge = "11h"
-dir = "/path/to/c2"
 [caches.images]
 dir = "/path/to/c3"
 [caches.getResource]
@@ -57,22 +56,20 @@ dir = "/path/to/c4"
 	cfg, err := config.FromConfigString(configStr, "toml")
 	c.Assert(err, qt.IsNil)
 	fs := afero.NewMemMapFs()
-	decoded, err := DecodeConfig(fs, cfg)
-	c.Assert(err, qt.IsNil)
+	decoded := testconfig.GetTestConfigs(fs, cfg).Base.Caches
+	c.Assert(len(decoded), qt.Equals, 7)
 
-	c.Assert(len(decoded), qt.Equals, 6)
-
-	c2 := decoded["getcsv"]
-	c.Assert(c2.MaxAge.String(), qt.Equals, "11h0m0s")
-	c.Assert(c2.Dir, qt.Equals, filepath.FromSlash("/path/to/c2/filecache/getcsv"))
+	c2 := decoded["misc"]
+	c.Assert(c2.MaxAge.String(), qt.Equals, "10m0s")
+	c.Assert(c2.DirCompiled, qt.Equals, filepath.FromSlash("/path/to/c1/filecache/misc"))
 
 	c3 := decoded["images"]
 	c.Assert(c3.MaxAge, qt.Equals, time.Duration(-1))
-	c.Assert(c3.Dir, qt.Equals, filepath.FromSlash("/path/to/c3/filecache/images"))
+	c.Assert(c3.DirCompiled, qt.Equals, filepath.FromSlash("/path/to/c3/filecache/images"))
 
 	c4 := decoded["getresource"]
 	c.Assert(c4.MaxAge, qt.Equals, time.Duration(-1))
-	c.Assert(c4.Dir, qt.Equals, filepath.FromSlash("/path/to/c4/filecache/getresource"))
+	c.Assert(c4.DirCompiled, qt.Equals, filepath.FromSlash("/path/to/c4/filecache/getresource"))
 }
 
 func TestDecodeConfigIgnoreCache(t *testing.T) {
@@ -91,12 +88,9 @@ archeTypedir = "archetypes"
 
 ignoreCache = true
 [caches]
-[caches.getJSON]
+[caches.misc]
 maxAge = 1234
 dir = "/path/to/c1"
-[caches.getCSV]
-maxAge = 3456
-dir = "/path/to/c2"
 [caches.images]
 dir = "/path/to/c3"
 [caches.getResource]
@@ -106,10 +100,8 @@ dir = "/path/to/c4"
 	cfg, err := config.FromConfigString(configStr, "toml")
 	c.Assert(err, qt.IsNil)
 	fs := afero.NewMemMapFs()
-	decoded, err := DecodeConfig(fs, cfg)
-	c.Assert(err, qt.IsNil)
-
-	c.Assert(len(decoded), qt.Equals, 6)
+	decoded := testconfig.GetTestConfigs(fs, cfg).Base.Caches
+	c.Assert(len(decoded), qt.Equals, 7)
 
 	for _, v := range decoded {
 		c.Assert(v.MaxAge, qt.Equals, time.Duration(0))
@@ -118,7 +110,7 @@ dir = "/path/to/c4"
 
 func TestDecodeConfigDefault(t *testing.T) {
 	c := qt.New(t)
-	cfg := newTestConfig()
+	cfg := config.New()
 
 	if runtime.GOOS == "windows" {
 		cfg.Set("resourceDir", "c:\\cache\\resources")
@@ -128,71 +120,52 @@ func TestDecodeConfigDefault(t *testing.T) {
 		cfg.Set("resourceDir", "/cache/resources")
 		cfg.Set("cacheDir", "/cache/thecache")
 	}
+	cfg.Set("workingDir", filepath.FromSlash("/my/cool/hugoproject"))
 
 	fs := afero.NewMemMapFs()
+	decoded := testconfig.GetTestConfigs(fs, cfg).Base.Caches
+	c.Assert(len(decoded), qt.Equals, 7)
 
-	decoded, err := DecodeConfig(fs, cfg)
-
-	c.Assert(err, qt.IsNil)
-
-	c.Assert(len(decoded), qt.Equals, 6)
-
-	imgConfig := decoded[cacheKeyImages]
-	jsonConfig := decoded[cacheKeyGetJSON]
+	imgConfig := decoded[filecache.CacheKeyImages]
+	miscConfig := decoded[filecache.CacheKeyMisc]
 
 	if runtime.GOOS == "windows" {
-		c.Assert(imgConfig.Dir, qt.Equals, filepath.FromSlash("_gen/images"))
+		c.Assert(imgConfig.DirCompiled, qt.Equals, filepath.FromSlash("_gen/images"))
 	} else {
-		c.Assert(imgConfig.Dir, qt.Equals, "_gen/images")
-		c.Assert(jsonConfig.Dir, qt.Equals, "/cache/thecache/hugoproject/filecache/getjson")
+		c.Assert(imgConfig.DirCompiled, qt.Equals, "_gen/images")
+		c.Assert(miscConfig.DirCompiled, qt.Equals, "/cache/thecache/hugoproject/filecache/misc")
 	}
 
-	c.Assert(imgConfig.isResourceDir, qt.Equals, true)
-	c.Assert(jsonConfig.isResourceDir, qt.Equals, false)
+	c.Assert(imgConfig.IsResourceDir, qt.Equals, true)
+	c.Assert(miscConfig.IsResourceDir, qt.Equals, false)
 }
 
-func TestDecodeConfigInvalidDir(t *testing.T) {
-	t.Parallel()
-
+func TestFileCacheConfigMarshalJSON(t *testing.T) {
 	c := qt.New(t)
 
-	configStr := `
-resourceDir = "myresources"
-contentDir = "content"
-dataDir = "data"
-i18nDir = "i18n"
-layoutDir = "layouts"
-assetDir = "assets"
-archeTypedir = "archetypes"
-
-[caches]
-[caches.getJSON]
-maxAge = "10m"
-dir = "/"
-
-`
-	if runtime.GOOS == "windows" {
-		configStr = strings.Replace(configStr, "/", "c:\\\\", 1)
-	}
-
-	cfg, err := config.FromConfigString(configStr, "toml")
-	c.Assert(err, qt.IsNil)
-	fs := afero.NewMemMapFs()
-
-	_, err = DecodeConfig(fs, cfg)
-	c.Assert(err, qt.Not(qt.IsNil))
-}
-
-func newTestConfig() config.Provider {
 	cfg := config.New()
-	cfg.Set("workingDir", filepath.FromSlash("/my/cool/hugoproject"))
-	cfg.Set("contentDir", "content")
-	cfg.Set("dataDir", "data")
-	cfg.Set("resourceDir", "resources")
-	cfg.Set("i18nDir", "i18n")
-	cfg.Set("layoutDir", "layouts")
-	cfg.Set("archetypeDir", "archetypes")
-	cfg.Set("assetDir", "assets")
+	cfg.Set("cacheDir", "/cache")
+	cfg.Set("workingDir", "/my/project")
 
-	return cfg
+	fs := afero.NewMemMapFs()
+	decoded := testconfig.GetTestConfigs(fs, cfg).Base.Caches
+
+	moduleQueriesConfig := decoded[filecache.CacheKeyModuleQueries]
+	c.Assert(moduleQueriesConfig.MaxAge, qt.Equals, 24*time.Hour)
+
+	// Also verify the new moduleGitInfo cache.
+	moduleGitInfoConfig := decoded[filecache.CacheKeyModuleGitInfo]
+	c.Assert(moduleGitInfoConfig.MaxAge, qt.Equals, 24*time.Hour)
+
+	b, err := json.Marshal(moduleQueriesConfig)
+	c.Assert(err, qt.IsNil)
+
+	c.Assert(string(b), qt.Contains, `"maxAge":"24h"`)
+	c.Assert(string(b), qt.Not(qt.Contains), "86400000000000")
+	c.Assert(string(b), qt.Not(qt.Contains), "8.64e")
+
+	moduleQueriesConfig.MaxAge = -1
+	b, err = json.Marshal(moduleQueriesConfig)
+	c.Assert(err, qt.IsNil)
+	c.Assert(string(b), qt.Contains, `"maxAge":-1`)
 }

@@ -1,0 +1,10 @@
+# Test the gen commands.
+
+hugo gen -h
+stdout 'Generate documentation for your project using Hugo''s documentation engine, including syntax highlighting for various programming languages\.'
+hugo gen doc --dir clidocs
+
+hugo gen man -h
+stdout 'up-to-date man pages'
+hugo gen man --dir manpages
+

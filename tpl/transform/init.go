@@ -14,6 +14,8 @@
 package transform
 
 import (
+	"context"
+
 	"github.com/gohugoio/hugo/deps"
 	"github.com/gohugoio/hugo/tpl/internal"
 )
@@ -26,8 +28,13 @@ func init() {
 
 		ns := &internal.TemplateFuncsNamespace{
 			Name:    name,
-			Context: func(args ...interface{}) (interface{}, error) { return ctx, nil },
+			Context: func(cctx context.Context, args ...any) (any, error) { return ctx, nil },
 		}
+
+		ns.AddMethodMapping(ctx.CanHighlight,
+			nil,
+			[][2]string{},
+		)
 
 		ns.AddMethodMapping(ctx.Emojify,
 			[]string{"emojify"},
@@ -41,15 +48,20 @@ func init() {
 			[][2]string{},
 		)
 
+		ns.AddMethodMapping(ctx.HighlightCodeBlock,
+			nil,
+			[][2]string{},
+		)
+
 		ns.AddMethodMapping(ctx.HTMLEscape,
 			[]string{"htmlEscape"},
 			[][2]string{
 				{
-					`{{ htmlEscape "Cathal Garvey & The Sunshine Band <cathal@foo.bar>" | safeHTML}}`,
+					`{{ htmlEscape "Cathal Garvey & The Sunshine Band <cathal@foo.bar>" | safeHTML }}`,
 					`Cathal Garvey &amp; The Sunshine Band &lt;cathal@foo.bar&gt;`,
 				},
 				{
-					`{{ htmlEscape "Cathal Garvey & The Sunshine Band <cathal@foo.bar>"}}`,
+					`{{ htmlEscape "Cathal Garvey & The Sunshine Band <cathal@foo.bar>" }}`,
 					`Cathal Garvey &amp;amp; The Sunshine Band &amp;lt;cathal@foo.bar&amp;gt;`,
 				},
 				{
@@ -59,19 +71,24 @@ func init() {
 			},
 		)
 
+		ns.AddMethodMapping(ctx.HTMLToMarkdown,
+			nil,
+			[][2]string{},
+		)
+
 		ns.AddMethodMapping(ctx.HTMLUnescape,
 			[]string{"htmlUnescape"},
 			[][2]string{
 				{
-					`{{ htmlUnescape "Cathal Garvey &amp; The Sunshine Band &lt;cathal@foo.bar&gt;" | safeHTML}}`,
+					`{{ htmlUnescape "Cathal Garvey &amp; The Sunshine Band &lt;cathal@foo.bar&gt;" | safeHTML }}`,
 					`Cathal Garvey & The Sunshine Band <cathal@foo.bar>`,
 				},
 				{
-					`{{"Cathal Garvey &amp;amp; The Sunshine Band &amp;lt;cathal@foo.bar&amp;gt;" | htmlUnescape | htmlUnescape | safeHTML}}`,
+					`{{ "Cathal Garvey &amp;amp; The Sunshine Band &amp;lt;cathal@foo.bar&amp;gt;" | htmlUnescape | htmlUnescape | safeHTML }}`,
 					`Cathal Garvey & The Sunshine Band <cathal@foo.bar>`,
 				},
 				{
-					`{{"Cathal Garvey &amp;amp; The Sunshine Band &amp;lt;cathal@foo.bar&amp;gt;" | htmlUnescape | htmlUnescape }}`,
+					`{{ "Cathal Garvey &amp;amp; The Sunshine Band &amp;lt;cathal@foo.bar&amp;gt;" | htmlUnescape | htmlUnescape }}`,
 					`Cathal Garvey &amp; The Sunshine Band &lt;cathal@foo.bar&gt;`,
 				},
 				{
@@ -84,7 +101,7 @@ func init() {
 		ns.AddMethodMapping(ctx.Markdownify,
 			[]string{"markdownify"},
 			[][2]string{
-				{`{{ .Title | markdownify}}`, `<strong>BatMan</strong>`},
+				{`{{ .Title | markdownify }}`, `<strong>BatMan</strong>`},
 			},
 		)
 
@@ -95,6 +112,11 @@ func init() {
 			},
 		)
 
+		ns.AddMethodMapping(ctx.PortableText,
+			nil,
+			[][2]string{},
+		)
+
 		ns.AddMethodMapping(ctx.Remarshal,
 			nil,
 			[][2]string{
@@ -102,11 +124,26 @@ func init() {
 			},
 		)
 
+		ns.AddMethodMapping(ctx.ToMath,
+			nil,
+			[][2]string{},
+		)
+
 		ns.AddMethodMapping(ctx.Unmarshal,
 			[]string{"unmarshal"},
 			[][2]string{
 				{`{{ "hello = \"Hello World\"" | transform.Unmarshal }}`, "map[hello:Hello World]"},
 				{`{{ "hello = \"Hello World\"" | resources.FromString "data/greetings.toml" | transform.Unmarshal }}`, "map[hello:Hello World]"},
+			},
+		)
+
+		ns.AddMethodMapping(ctx.XMLEscape,
+			nil,
+			[][2]string{
+				{
+					`{{ transform.XMLEscape "<p>abc</p>" }}`,
+					`&lt;p&gt;abc&lt;/p&gt;`,
+				},
 			},
 		)
 

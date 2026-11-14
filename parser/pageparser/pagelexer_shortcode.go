@@ -13,16 +13,17 @@
 
 package pageparser
 
+import "unique"
+
 type lexerShortcodeState struct {
 	currLeftDelimItem  ItemType
 	currRightDelimItem ItemType
 	isInline           bool
-	currShortcodeName  string          // is only set when a shortcode is in opened state
-	closingState       int             // > 0 = on its way to be closed
-	elementStepNum     int             // step number in element
-	paramElements      int             // number of elements (name + value = 2) found first
-	openShortcodes     map[string]bool // set of shortcodes in open state
-
+	currShortcodeName  string                         // is only set when a shortcode is in opened state
+	closingState       int                            // > 0 = on its way to be closed
+	elementStepNum     int                            // step number in element
+	paramElements      int                            // number of elements (name + value = 2) found first
+	openShortcodes     map[unique.Handle[string]]bool // set of shortcodes in open state
 }
 
 // Shortcode syntax
@@ -32,7 +33,7 @@ var (
 	rightDelimScNoMarkup   = []byte(">}}")
 	leftDelimScWithMarkup  = []byte("{{%")
 	rightDelimScWithMarkup = []byte("%}}")
-	leftComment            = []byte("/*") // comments in this context us used to to mark shortcodes as "not really a shortcode"
+	leftComment            = []byte("/*") // comments in this context are used to mark shortcodes as "not really a shortcode"
 	rightComment           = []byte("*/")
 )
 
@@ -255,16 +256,17 @@ Loop:
 			}
 		default:
 			l.backup()
-			word := string(l.input[l.start:l.pos])
-			if l.closingState > 0 && !l.openShortcodes[word] {
-				return l.errorf("closing tag for shortcode '%s' does not match start tag", word)
-			} else if l.closingState > 0 {
+			word := unique.Make(string(l.input[l.start:l.pos]))
+			if l.closingState > 0 {
+				if !l.openShortcodes[word] {
+					return l.errorf("closing tag for shortcode '%s' does not match start tag", word.Value())
+				}
 				l.openShortcodes[word] = false
 				lookForEnd = true
 			}
 
 			l.closingState = 0
-			l.currShortcodeName = word
+			l.currShortcodeName = word.Value()
 			l.openShortcodes[word] = true
 			l.elementStepNum++
 			if l.isInline {
@@ -288,7 +290,7 @@ func lexEndOfShortcode(l *pageLexer) stateFunc {
 		return lexShortcodeRightDelim
 	}
 	switch r := l.next(); {
-	case isSpace(r):
+	case isASCIISpace(r):
 		l.ignore()
 	default:
 		return l.errorf("unclosed shortcode")
@@ -305,7 +307,7 @@ func lexInsideShortcode(l *pageLexer) stateFunc {
 	case r == eof:
 		// eol is allowed inside shortcodes; this may go to end of document before it fails
 		return l.errorf("unclosed shortcode action")
-	case isSpace(r), isEndOfLine(r):
+	case isASCIISpace(r):
 		l.ignore()
 	case r == '=':
 		l.consumeSpace()
@@ -323,6 +325,7 @@ func lexInsideShortcode(l *pageLexer) stateFunc {
 		}
 		l.closingState++
 		l.isInline = false
+		l.elementStepNum = 0
 		l.emit(tScClose)
 	case r == '\\':
 		l.ignore()

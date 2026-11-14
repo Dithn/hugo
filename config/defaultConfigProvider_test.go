@@ -17,15 +17,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/spf13/viper"
-
+	"github.com/gohugoio/hugo/common/hmaps"
 	"github.com/gohugoio/hugo/common/para"
-
-	"github.com/gohugoio/hugo/common/maps"
 
 	qt "github.com/frankban/quicktest"
 )
@@ -36,7 +34,7 @@ func TestDefaultConfigProvider(t *testing.T) {
 	c.Run("Set and get", func(c *qt.C) {
 		cfg := New()
 		var k string
-		var v interface{}
+		var v any
 
 		k, v = "foo", "bar"
 		cfg.Set(k, v)
@@ -49,7 +47,7 @@ func TestDefaultConfigProvider(t *testing.T) {
 		c.Assert(cfg.Get(k), qt.Equals, v)
 		c.Assert(cfg.GetInt(k), qt.Equals, v)
 
-		c.Assert(cfg.Get(""), qt.DeepEquals, maps.Params{
+		c.Assert(cfg.Get(""), qt.DeepEquals, hmaps.Params{
 			"foo": 42,
 		})
 	})
@@ -57,42 +55,42 @@ func TestDefaultConfigProvider(t *testing.T) {
 	c.Run("Set and get map", func(c *qt.C) {
 		cfg := New()
 
-		cfg.Set("foo", map[string]interface{}{
+		cfg.Set("foo", map[string]any{
 			"bar": "baz",
 		})
 
-		c.Assert(cfg.Get("foo"), qt.DeepEquals, maps.Params{
+		c.Assert(cfg.Get("foo"), qt.DeepEquals, hmaps.Params{
 			"bar": "baz",
 		})
 
-		c.Assert(cfg.GetStringMap("foo"), qt.DeepEquals, map[string]interface{}{"bar": string("baz")})
+		c.Assert(cfg.GetStringMap("foo"), qt.DeepEquals, map[string]any{"bar": string("baz")})
 		c.Assert(cfg.GetStringMapString("foo"), qt.DeepEquals, map[string]string{"bar": string("baz")})
 	})
 
 	c.Run("Set and get nested", func(c *qt.C) {
 		cfg := New()
 
-		cfg.Set("a", map[string]interface{}{
+		cfg.Set("a", map[string]any{
 			"B": "bv",
 		})
 		cfg.Set("a.c", "cv")
 
-		c.Assert(cfg.Get("a"), qt.DeepEquals, maps.Params{
+		c.Assert(cfg.Get("a"), qt.DeepEquals, hmaps.Params{
 			"b": "bv",
 			"c": "cv",
 		})
 		c.Assert(cfg.Get("a.c"), qt.Equals, "cv")
 
 		cfg.Set("b.a", "av")
-		c.Assert(cfg.Get("b"), qt.DeepEquals, maps.Params{
+		c.Assert(cfg.Get("b"), qt.DeepEquals, hmaps.Params{
 			"a": "av",
 		})
 
-		cfg.Set("b", map[string]interface{}{
+		cfg.Set("b", map[string]any{
 			"b": "bv",
 		})
 
-		c.Assert(cfg.Get("b"), qt.DeepEquals, maps.Params{
+		c.Assert(cfg.Get("b"), qt.DeepEquals, hmaps.Params{
 			"a": "av",
 			"b": "bv",
 		})
@@ -101,12 +99,12 @@ func TestDefaultConfigProvider(t *testing.T) {
 
 		cfg.Set("a", "av")
 
-		cfg.Set("", map[string]interface{}{
+		cfg.Set("", map[string]any{
 			"a": "av2",
 			"b": "bv2",
 		})
 
-		c.Assert(cfg.Get(""), qt.DeepEquals, maps.Params{
+		c.Assert(cfg.Get(""), qt.DeepEquals, hmaps.Params{
 			"a": "av2",
 			"b": "bv2",
 		})
@@ -115,30 +113,30 @@ func TestDefaultConfigProvider(t *testing.T) {
 
 		cfg.Set("a", "av")
 
-		cfg.Set("", map[string]interface{}{
+		cfg.Set("", map[string]any{
 			"b": "bv2",
 		})
 
-		c.Assert(cfg.Get(""), qt.DeepEquals, maps.Params{
+		c.Assert(cfg.Get(""), qt.DeepEquals, hmaps.Params{
 			"a": "av",
 			"b": "bv2",
 		})
 
 		cfg = New()
 
-		cfg.Set("", map[string]interface{}{
-			"foo": map[string]interface{}{
+		cfg.Set("", map[string]any{
+			"foo": map[string]any{
 				"a": "av",
 			},
 		})
 
-		cfg.Set("", map[string]interface{}{
-			"foo": map[string]interface{}{
+		cfg.Set("", map[string]any{
+			"foo": map[string]any{
 				"b": "bv2",
 			},
 		})
 
-		c.Assert(cfg.Get("foo"), qt.DeepEquals, maps.Params{
+		c.Assert(cfg.Get("foo"), qt.DeepEquals, hmaps.Params{
 			"a": "av",
 			"b": "bv2",
 		})
@@ -147,16 +145,16 @@ func TestDefaultConfigProvider(t *testing.T) {
 	c.Run("Merge default strategy", func(c *qt.C) {
 		cfg := New()
 
-		cfg.Set("a", map[string]interface{}{
+		cfg.Set("a", map[string]any{
 			"B": "bv",
 		})
 
-		cfg.Merge("a", map[string]interface{}{
+		cfg.Merge("a", map[string]any{
 			"B": "bv2",
 			"c": "cv2",
 		})
 
-		c.Assert(cfg.Get("a"), qt.DeepEquals, maps.Params{
+		c.Assert(cfg.Get("a"), qt.DeepEquals, hmaps.Params{
 			"b": "bv",
 			"c": "cv2",
 		})
@@ -165,12 +163,12 @@ func TestDefaultConfigProvider(t *testing.T) {
 
 		cfg.Set("a", "av")
 
-		cfg.Merge("", map[string]interface{}{
+		cfg.Merge("", map[string]any{
 			"a": "av2",
 			"b": "bv2",
 		})
 
-		c.Assert(cfg.Get(""), qt.DeepEquals, maps.Params{
+		c.Assert(cfg.Get(""), qt.DeepEquals, hmaps.Params{
 			"a": "av",
 		})
 	})
@@ -178,26 +176,26 @@ func TestDefaultConfigProvider(t *testing.T) {
 	c.Run("Merge shallow", func(c *qt.C) {
 		cfg := New()
 
-		cfg.Set("a", map[string]interface{}{
+		cfg.Set("a", map[string]any{
 			"_merge": "shallow",
 			"B":      "bv",
-			"c": map[string]interface{}{
+			"c": map[string]any{
 				"b": "bv",
 			},
 		})
 
-		cfg.Merge("a", map[string]interface{}{
-			"c": map[string]interface{}{
+		cfg.Merge("a", map[string]any{
+			"c": map[string]any{
 				"d": "dv2",
 			},
 			"e": "ev2",
 		})
 
-		c.Assert(cfg.Get("a"), qt.DeepEquals, maps.Params{
+		c.Assert(cfg.Get("a"), qt.DeepEquals, hmaps.Params{
 			"e":      "ev2",
-			"_merge": maps.ParamsMergeStrategyShallow,
+			"_merge": hmaps.ParamsMergeStrategyShallow,
 			"b":      "bv",
-			"c": maps.Params{
+			"c": hmaps.Params{
 				"b": "bv",
 			},
 		})
@@ -205,61 +203,59 @@ func TestDefaultConfigProvider(t *testing.T) {
 
 	// Issue #8679
 	c.Run("Merge typed maps", func(c *qt.C) {
-
-		for _, left := range []interface{}{
+		for _, left := range []any{
 			map[string]string{
 				"c": "cv1",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"c": "cv1",
 			},
-			map[interface{}]interface{}{
+			map[any]any{
 				"c": "cv1",
 			},
 		} {
 			cfg := New()
 
-			cfg.Set("", map[string]interface{}{
+			cfg.Set("", map[string]any{
 				"b": left,
 			})
 
-			cfg.Merge("", maps.Params{
-				"b": maps.Params{
+			cfg.Merge("", hmaps.Params{
+				"b": hmaps.Params{
 					"c": "cv2",
 					"d": "dv2",
 				},
 			})
 
-			c.Assert(cfg.Get(""), qt.DeepEquals, maps.Params{
-				"b": maps.Params{
+			c.Assert(cfg.Get(""), qt.DeepEquals, hmaps.Params{
+				"b": hmaps.Params{
 					"c": "cv1",
 					"d": "dv2",
 				},
 			})
 		}
 
-		for _, left := range []interface{}{
+		for _, left := range []any{
 			map[string]string{
 				"b": "bv1",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"b": "bv1",
 			},
-			map[interface{}]interface{}{
+			map[any]any{
 				"b": "bv1",
 			},
 		} {
-
-			for _, right := range []interface{}{
+			for _, right := range []any{
 				map[string]string{
 					"b": "bv2",
 					"c": "cv2",
 				},
-				map[string]interface{}{
+				map[string]any{
 					"b": "bv2",
 					"c": "cv2",
 				},
-				map[interface{}]interface{}{
+				map[any]any{
 					"b": "bv2",
 					"c": "cv2",
 				},
@@ -270,34 +266,32 @@ func TestDefaultConfigProvider(t *testing.T) {
 
 				cfg.Merge("a", right)
 
-				c.Assert(cfg.Get(""), qt.DeepEquals, maps.Params{
-					"a": maps.Params{
+				c.Assert(cfg.Get(""), qt.DeepEquals, hmaps.Params{
+					"a": hmaps.Params{
 						"b": "bv1",
 						"c": "cv2",
 					},
 				})
 			}
-
 		}
-
 	})
 
 	// Issue #8701
 	c.Run("Prevent _merge only maps", func(c *qt.C) {
 		cfg := New()
 
-		cfg.Set("", map[string]interface{}{
+		cfg.Set("", map[string]any{
 			"B": "bv",
 		})
 
-		cfg.Merge("", map[string]interface{}{
-			"c": map[string]interface{}{
+		cfg.Merge("", map[string]any{
+			"c": map[string]any{
 				"_merge": "shallow",
 				"d":      "dv2",
 			},
 		})
 
-		c.Assert(cfg.Get(""), qt.DeepEquals, maps.Params{
+		c.Assert(cfg.Get(""), qt.DeepEquals, hmaps.Params{
 			"b": "bv",
 		})
 	})
@@ -305,7 +299,7 @@ func TestDefaultConfigProvider(t *testing.T) {
 	c.Run("IsSet", func(c *qt.C) {
 		cfg := New()
 
-		cfg.Set("a", map[string]interface{}{
+		cfg.Set("a", map[string]any{
 			"B": "bv",
 		})
 
@@ -338,8 +332,7 @@ func TestDefaultConfigProvider(t *testing.T) {
 			return nil
 		}
 
-		for i := 0; i < 20; i++ {
-			i := i
+		for i := range 20 {
 			r.Run(func() error {
 				const v = 42
 				k := fmt.Sprintf("k%d", i)
@@ -347,7 +340,7 @@ func TestDefaultConfigProvider(t *testing.T) {
 					return err
 				}
 
-				m := maps.Params{
+				m := hmaps.Params{
 					"new": 42,
 				}
 
@@ -359,19 +352,103 @@ func TestDefaultConfigProvider(t *testing.T) {
 
 		c.Assert(r.Wait(), qt.IsNil)
 	})
+
+	c.Run("GetBool", func(c *qt.C) {
+		cfg := New()
+
+		var k string
+		var v bool
+
+		k, v = "foo", true
+
+		cfg.Set(k, v)
+		c.Assert(cfg.Get(k), qt.Equals, v)
+		c.Assert(cfg.GetBool(k), qt.Equals, v)
+	})
+
+	c.Run("GetParams", func(c *qt.C) {
+		cfg := New()
+		k := "foo"
+
+		cfg.Set(k, hmaps.Params{k: true})
+		c.Assert(cfg.GetParams(k), qt.DeepEquals, hmaps.Params{
+			k: true,
+		})
+
+		c.Assert(cfg.GetParams("bar"), qt.IsNil)
+	})
+
+	c.Run("Keys", func(c *qt.C) {
+		cfg := New()
+		k := "foo"
+		k2 := "bar"
+
+		cfg.Set(k, hmaps.Params{k: struct{}{}})
+		cfg.Set(k2, hmaps.Params{k2: struct{}{}})
+
+		c.Assert(len(cfg.Keys()), qt.Equals, 2)
+
+		got := cfg.Keys()
+		slices.Sort(got)
+
+		want := []string{k, k2}
+		slices.Sort(want)
+
+		c.Assert(got, qt.DeepEquals, want)
+	})
+
+	c.Run("WalkParams", func(c *qt.C) {
+		cfg := New()
+
+		cfg.Set("x", hmaps.Params{})
+		cfg.Set("y", hmaps.Params{})
+
+		var got []string
+		cfg.WalkParams(func(params ...hmaps.KeyParams) bool {
+			got = append(got, params[len(params)-1].Key)
+			return false
+		})
+
+		want := []string{"", "x", "y"}
+		slices.Sort(got)
+		slices.Sort(want)
+
+		c.Assert(got, qt.DeepEquals, want)
+
+		cfg = New()
+		cfg.WalkParams(func(params ...hmaps.KeyParams) bool {
+			return true
+		})
+
+		got = []string{""}
+		want = []string{""}
+		c.Assert(got, qt.DeepEquals, want)
+	})
+
+	c.Run("SetDefaults", func(c *qt.C) {
+		cfg := New()
+
+		cfg.SetDefaults(hmaps.Params{
+			"foo": "bar",
+			"bar": "baz",
+		})
+
+		c.Assert(cfg.Get("foo"), qt.Equals, "bar")
+		c.Assert(cfg.Get("bar"), qt.Equals, "baz")
+	})
 }
 
 func BenchmarkDefaultConfigProvider(b *testing.B) {
 	type cfger interface {
-		Get(key string) interface{}
-		Set(key string, value interface{})
+		Get(key string) any
+		Set(key string, value any)
 		IsSet(key string) bool
 	}
 
-	newMap := func() map[string]interface{} {
-		return map[string]interface{}{
-			"a": map[string]interface{}{
-				"b": map[string]interface{}{
+	newMap := func() map[string]any {
+		return map[string]any{
+			"a": map[string]any{
+				"b": map[string]any{
 					"c": 32,
 					"d": 43,
 				},
@@ -397,16 +474,9 @@ func BenchmarkDefaultConfigProvider(b *testing.B) {
 		}
 	}
 
-	b.Run("Viper", func(b *testing.B) {
-		v := viper.New()
-		for i := 0; i < b.N; i++ {
-			runMethods(b, v)
-		}
-	})
-
 	b.Run("Custom", func(b *testing.B) {
 		cfg := New()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			runMethods(b, cfg)
 		}
 	})

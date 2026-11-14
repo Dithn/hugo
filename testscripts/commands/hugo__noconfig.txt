@@ -1,0 +1,8 @@
+# See issue 15393.
+hugo
+
+grep 'Hello home' public/index.html
+exists public/index.xml
+
+-- layouts/all.html --
+Hello {{ .Kind }}.

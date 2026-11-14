@@ -26,9 +26,9 @@ import (
 
 func TestMethods(t *testing.T) {
 	var (
-		zeroIE     = reflect.TypeOf((*IEmbed)(nil)).Elem()
-		zeroIEOnly = reflect.TypeOf((*IEOnly)(nil)).Elem()
-		zeroI      = reflect.TypeOf((*I)(nil)).Elem()
+		zeroIE     = reflect.TypeFor[IEmbed]()
+		zeroIEOnly = reflect.TypeFor[IEOnly]()
+		zeroI      = reflect.TypeFor[I]()
 	)
 
 	dir, _ := os.Getwd()
@@ -85,7 +85,7 @@ type I interface {
 	Method3(myint int, mystring string)
 	Method5() (string, error)
 	Method6() *net.IP
-	Method7() interface{}
+	Method7() any
 	Method8() herrors.ErrorContext
 	method2()
 	method9() os.FileInfo

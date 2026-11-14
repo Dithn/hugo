@@ -18,7 +18,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
+	"net/url"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/gohugoio/hugo/common/herrors"
@@ -34,35 +39,74 @@ const securityConfigKey = "security"
 // DefaultConfig holds the default security policy.
 var DefaultConfig = Config{
 	Exec: Exec{
-		Allow: NewWhitelist(
-			"^dart-sass-embedded$",
-			"^go$",  // for Go Modules
-			"^npx$", // used by all Node tools (Babel, PostCSS).
+		Allow: MustNewWhitelist(
+			"^(dart-)?sass$", // sass, dart-sass
+			"^go$",           // for Go Modules
+			"^git$",          // For Git info
+			"^node$",         // Used as the runtime for Node tools.
 			"^postcss$",
 		),
 		// These have been tested to work with Hugo's external programs
 		// on Windows, Linux and MacOS.
-		OsEnv: NewWhitelist("(?i)^(PATH|PATHEXT|APPDATA|TMP|TEMP|TERM)$"),
+		OsEnv: MustNewWhitelist(`(?i)^((HTTPS?|NO)_PROXY|PATH(EXT)?|APPDATA|TE?MP|TERM|GO\w+|(XDG_CONFIG_)?HOME|USERPROFILE|SSH_AUTH_SOCK|DISPLAY|LANG|SYSTEMDRIVE|PROGRAMDATA)$`),
 	},
 	Funcs: Funcs{
-		Getenv: NewWhitelist("^HUGO_"),
+		Getenv: MustNewWhitelist("^HUGO_", "^CI$"),
 	},
 	HTTP: HTTP{
-		URLs:    NewWhitelist(".*"),
-		Methods: NewWhitelist("(?i)GET|POST"),
+		// Allow URLs whose host starts with a letter (the typical
+		// "https://example.com" shape), deny anything that looks like
+		// localhost, and deny URLs with userinfo ("http://user@...") to
+		// foil the obvious SSRF bypass. Public IP literals are collateral
+		// blocks; users who need them can override security.http.urls.
+		URLs: MustNewWhitelist(
+			`(?i)^https?://[a-z0-9]`,
+			`! (?i)^https?://\d+\.`,
+			`! (?i)localhost`,
+			`! (?i)^https?://[^/?#]*@`,
+		),
+		Methods: MustNewWhitelist("(?i)GET|POST"),
 	},
+	Node: Node{
+		Permissions: NodePermissions{
+			Disable:           false,
+			AllowRead:         []string{"."},
+			AllowWrite:        []string{},              // No write access by default.
+			AllowAddons:       []string{"tailwindcss"}, // tailwindcss does not work without addon permissions.
+			AllowWorker:       []string{"tailwindcss"}, // tailwindcss needs worker access.
+			AllowChildProcess: []string{"tailwindcss"}, // detect-libc spawns getconf on some Linux setups.
+		},
+	},
+	// Content under /content is treated as untrusted. text/html bodies are
+	// emitted verbatim and are an XSS sink, so they are denied by default.
+	// The same goes for text/org, whose export blocks and inline snippets
+	// pass raw HTML through unescaped.
+	// Everything else is allowed because Whitelist treats a deny-only list as
+	// "allow anything not denied".
+	AllowContent: MustNewWhitelist("! ^text/html$", "! ^text/org$"),
 }
 
 // Config is the top level security config.
+// <docsmeta>{"name": "security", "description": "This section holds the top level security config.", "newIn": "0.91.0" }</docsmeta>
 type Config struct {
-	// Restricts access to os.Exec.
+	// Restricts access to os.Exec....
+	// <docsmeta>{ "newIn": "0.91.0" }</docsmeta>
 	Exec Exec `json:"exec"`
 
 	// Restricts access to certain template funcs.
 	Funcs Funcs `json:"funcs"`
 
-	// Restricts access to resources.Get, getJSON, getCSV.
+	// Restricts access to resources.GetRemote, getJSON, getCSV.
 	HTTP HTTP `json:"http"`
+
+	// Node holds Node.js security settings.
+	Node Node `json:"node"`
+
+	// AllowContent restricts which content media types may be used for
+	// pages under /content. Matched against the full MIME type (e.g.
+	// "text/html"). text/html is denied by default because Hugo emits the
+	// body verbatim.
+	AllowContent Whitelist `json:"allowContent"`
 
 	// Allow inline shortcodes
 	EnableInlineShortcodes bool `json:"enableInlineShortcodes"`
@@ -84,8 +128,41 @@ type HTTP struct {
 	// URLs to allow in remote HTTP (resources.Get, getJSON, getCSV).
 	URLs Whitelist `json:"urls"`
 
+	// Whether to honor the HTTP_PROXY, HTTPS_PROXY and NO_PROXY environment
+	// variables for remote HTTP. Off by default, as a proxy hides the
+	// resolved destination address from the security policy.
+	// <docsmeta>{ "newIn": "0.166.0" }</docsmeta>
+	ProxyFromEnvironment bool `json:"proxyFromEnvironment"`
+
 	// HTTP methods to allow.
 	Methods Whitelist `json:"methods"`
+
+	// Media types where the Content-Type in the response is used instead of resolving from the file content.
+	MediaTypes Whitelist `json:"mediaTypes"`
+}
+
+// Node holds Node.js security settings.
+type Node struct {
+	// Permissions configures Node's --permission flag for file system access control.
+	Permissions NodePermissions `json:"permissions"`
+}
+
+// NodePermissions configures the Node.js permission model (--permission).
+// Paths are relative to the working directory; "." means the working directory itself.
+// Use "*" to allow all paths.
+type NodePermissions struct {
+	// Disable turns off the Node.js permission model entirely.
+	Disable           bool     `json:"disable"`
+	AllowRead         []string `json:"allowRead"`
+	AllowWrite        []string `json:"allowWrite"`
+	AllowAddons       []string `json:"allowAddons"`
+	AllowWorker       []string `json:"allowWorker"`
+	AllowChildProcess []string `json:"allowChildProcess"`
+}
+
+// IsEnabled reports whether the Node.js permission model is active.
+func (p NodePermissions) IsEnabled() bool {
+	return !p.Disable
 }
 
 // ToTOML converts c to TOML with [security] as the root.
@@ -110,7 +187,6 @@ func (c Config) CheckAllowedExec(name string) error {
 		}
 	}
 	return nil
-
 }
 
 func (c Config) CheckAllowedGetEnv(name string) error {
@@ -124,15 +200,180 @@ func (c Config) CheckAllowedGetEnv(name string) error {
 	return nil
 }
 
-func (c Config) CheckAllowedHTTPURL(url string) error {
-	if !c.HTTP.URLs.Accept(url) {
+func (c Config) CheckAllowedHTTPURL(u string) error {
+	deny := func(name string) error {
 		return &AccessDeniedError{
-			name:     url,
+			name:     name,
 			path:     "security.http.urls",
 			policies: c.ToTOML(),
 		}
 	}
+	if !c.HTTP.URLs.Accept(u) {
+		return deny(u)
+	}
+	// A host can be written as an integer/hex/octal IPv4 literal
+	// (e.g. http://2130706433/ == http://127.0.0.1/) that has no dot and
+	// thus slips past IP-literal deny rules. Re-check the canonical form so
+	// the policy treats every encoding of the same address alike.
+	if canon, ok := canonicalIPv4URL(u); ok && !c.HTTP.URLs.Accept(canon) {
+		return deny(u)
+	}
 	return nil
+}
+
+// CheckAllowedHTTPAddress reports whether a dial-time destination address may
+// be connected to. address is the resolved "host:port" passed to a net.Dialer
+// control hook, i.e. the actual address the HTTP client is about to connect to.
+//
+// The security.http.urls allowlist only inspects the URL text and never sees
+// the resolved address, so a hostname that resolves to a loopback, private or
+// link-local (including the cloud metadata endpoint) address would otherwise
+// satisfy the policy and let resources.GetRemote reach an internal endpoint.
+// We deny any non–global-unicast or private address here to close that gap.
+func (c Config) CheckAllowedHTTPAddress(network, address string) error {
+	// Only enforced under the default hardened allowlist. If the user has
+	// customized security.http.urls they have opted into whatever hosts they
+	// listed, including internal ones (e.g. a local dev server), so we do not
+	// second-guess the resolved address.
+	if !slices.Equal(c.HTTP.URLs.patternsStrings, DefaultConfig.HTTP.URLs.patternsStrings) {
+		return nil
+	}
+	deny := func(name string) error {
+		return &AccessDeniedError{
+			name:     name,
+			path:     "security.http.urls",
+			policies: c.ToTOML(),
+		}
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		// The dial hook always hands us a resolved IP literal; anything else
+		// is unexpected, so fail closed.
+		return deny(address)
+	}
+	if !isPublicAddr(ip) {
+		return deny(host)
+	}
+	return nil
+}
+
+// Special-purpose ranges that Go classifies as global unicast and
+// non-private, but that are never reachable on the public Internet.
+var nonPublicPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"),   // Shared address space (CGNAT), RFC 6598.
+	netip.MustParsePrefix("192.0.0.0/24"),    // IETF protocol assignments.
+	netip.MustParsePrefix("192.0.2.0/24"),    // TEST-NET-1.
+	netip.MustParsePrefix("198.18.0.0/15"),   // Benchmarking.
+	netip.MustParsePrefix("198.51.100.0/24"), // TEST-NET-2.
+	netip.MustParsePrefix("203.0.113.0/24"),  // TEST-NET-3.
+	netip.MustParsePrefix("240.0.0.0/4"),     // Reserved.
+	netip.MustParsePrefix("2001:db8::/32"),   // Documentation.
+	netip.MustParsePrefix("3fff::/20"),       // Documentation.
+	netip.MustParsePrefix("2001:2::/48"),     // Benchmarking.
+}
+
+// nat64Prefixes embed an IPv4 address in the low 32 bits, RFC 6052/8215.
+var nat64Prefixes = []netip.Prefix{
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+}
+
+func isPublicAddr(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	for _, p := range nat64Prefixes {
+		if p.Contains(ip) {
+			b := ip.As16()
+			return isPublicAddr(netip.AddrFrom4([4]byte(b[12:])))
+		}
+	}
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return false
+	}
+	for _, p := range nonPublicPrefixes {
+		if p.Contains(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+// canonicalIPv4URL rewrites an integer/hex/octal IPv4 host in rawURL to its
+// canonical dotted-decimal form (inet_aton semantics), returning ok=false when
+// the host is a normal name or already dotted-decimal.
+func canonicalIPv4URL(rawURL string) (string, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", false
+	}
+	host := u.Hostname()
+	ip, ok := parseInetAtonIPv4(host)
+	if !ok || ip.String() == host {
+		return "", false
+	}
+	if port := u.Port(); port != "" {
+		u.Host = ip.String() + ":" + port
+	} else {
+		u.Host = ip.String()
+	}
+	return u.String(), true
+}
+
+// parseInetAtonIPv4 parses the inet_aton IPv4 forms (1–4 dot-separated parts,
+// each decimal, octal "0..." or hex "0x..."), e.g. "2130706433", "0x7f.0.0.1".
+func parseInetAtonIPv4(host string) (netip.Addr, bool) {
+	if host == "" {
+		return netip.Addr{}, false
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) > 4 {
+		return netip.Addr{}, false
+	}
+	vals := make([]uint64, len(parts))
+	for i, p := range parts {
+		v, ok := parseCInt(p)
+		if !ok {
+			return netip.Addr{}, false
+		}
+		vals[i] = v
+	}
+	maxLast := []uint64{0xffffffff, 0xffffff, 0xffff, 0xff}[len(parts)-1]
+	var n uint64
+	for i, v := range vals {
+		if i == len(parts)-1 {
+			if v > maxLast {
+				return netip.Addr{}, false
+			}
+			n |= v
+		} else {
+			if v > 0xff {
+				return netip.Addr{}, false
+			}
+			n |= v << (8 * (3 - i))
+		}
+	}
+	return netip.AddrFrom4([4]byte{byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}), true
+}
+
+func parseCInt(s string) (uint64, bool) {
+	base := 10
+	switch {
+	case len(s) >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'):
+		base, s = 16, s[2:]
+	case len(s) >= 2 && s[0] == '0':
+		base, s = 8, s[1:]
+	}
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(s, base, 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
 }
 
 func (c Config) CheckAllowedHTTPMethod(method string) error {
@@ -146,25 +387,41 @@ func (c Config) CheckAllowedHTTPMethod(method string) error {
 	return nil
 }
 
+func (c Config) CheckAllowedContent(mediaType string) error {
+	if !c.AllowContent.Accept(mediaType) {
+		return &AccessDeniedError{
+			name:     mediaType,
+			path:     "security.allowContent",
+			policies: c.ToTOML(),
+		}
+	}
+	return nil
+}
+
 // ToSecurityMap converts c to a map with 'security' as the root key.
-func (c Config) ToSecurityMap() map[string]interface{} {
+func (c Config) ToSecurityMap() map[string]any {
 	// Take it to JSON and back to get proper casing etc.
 	asJson, err := json.Marshal(c)
 	herrors.Must(err)
-	m := make(map[string]interface{})
+	m := make(map[string]any)
 	herrors.Must(json.Unmarshal(asJson, &m))
 
 	// Add the root
-	sec := map[string]interface{}{
+	sec := map[string]any{
 		"security": m,
 	}
 	return sec
-
 }
 
 // DecodeConfig creates a privacy Config from a given Hugo configuration.
 func DecodeConfig(cfg config.Provider) (Config, error) {
 	sc := DefaultConfig
+	// Deep copy slices to prevent mapstructure from mutating DefaultConfig.
+	sc.Node.Permissions.AllowRead = slices.Clone(sc.Node.Permissions.AllowRead)
+	sc.Node.Permissions.AllowWrite = slices.Clone(sc.Node.Permissions.AllowWrite)
+	sc.Node.Permissions.AllowAddons = slices.Clone(sc.Node.Permissions.AllowAddons)
+	sc.Node.Permissions.AllowWorker = slices.Clone(sc.Node.Permissions.AllowWorker)
+	sc.Node.Permissions.AllowChildProcess = slices.Clone(sc.Node.Permissions.AllowChildProcess)
 	if cfg.IsSet(securityConfigKey) {
 		m := cfg.GetStringMap(securityConfigKey)
 		dec, err := mapstructure.NewDecoder(
@@ -189,23 +446,21 @@ func DecodeConfig(cfg config.Provider) (Config, error) {
 	}
 
 	return sc, nil
-
 }
 
 func stringSliceToWhitelistHook() mapstructure.DecodeHookFuncType {
 	return func(
 		f reflect.Type,
 		t reflect.Type,
-		data interface{}) (interface{}, error) {
-
-		if t != reflect.TypeOf(Whitelist{}) {
+		data any,
+	) (any, error) {
+		if t != reflect.TypeFor[Whitelist]() {
 			return data, nil
 		}
 
 		wl := types.ToStringSlicePreserveString(data)
 
-		return NewWhitelist(wl...), nil
-
+		return NewWhitelist(wl...)
 	}
 }
 

@@ -1,16 +1,11 @@
 ---
-linktitle: ""
-description: ""
-publishdate: ""
-lastmod: ""
-categories: [functions]
-tags: []
-ns: ""
-signature: []
-workson: []
-hugoversion: ""
-aliases: []
-relatedfuncs: []
-toc: false
-deprecated: false
+title: {{ replace .File.ContentBaseName "-" " " | title }}
+description:
+categories: []
+keywords: []
+params:
+  functions_and_methods:
+    aliases: []
+    returnType:
+    signatures: []
 ---

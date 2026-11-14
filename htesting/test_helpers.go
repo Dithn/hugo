@@ -16,11 +16,15 @@ package htesting
 import (
 	"math/rand"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
+
+	qt "github.com/frankban/quicktest"
 
 	"github.com/spf13/afero"
 )
@@ -38,7 +42,7 @@ func init() {
 }
 
 // CreateTempDir creates a temp dir in the given filesystem and
-// returns the dirnam and a func that removes it when done.
+// returns the dirname and a func that removes it when done.
 func CreateTempDir(fs afero.Fs, prefix string) (string, func(), error) {
 	tempDir, err := afero.TempDir(fs, "", prefix)
 	if err != nil {
@@ -53,6 +57,27 @@ func CreateTempDir(fs afero.Fs, prefix string) (string, func(), error) {
 		tempDir = "/private" + tempDir
 	}
 	return tempDir, func() { fs.RemoveAll(tempDir) }, nil
+}
+
+// IsCaseInsensitiveFs reports whether dir lives on a case-insensitive filesystem
+// (e.g. the default on macOS and Windows).
+func IsCaseInsensitiveFs(dir string) (bool, error) {
+	f, err := os.CreateTemp(dir, "case-*.tmp")
+	if err != nil {
+		return false, err
+	}
+	f.Close()
+	defer os.Remove(f.Name())
+
+	_, err = os.Stat(filepath.Join(dir, strings.ToUpper(filepath.Base(f.Name()))))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return true, nil
 }
 
 // BailOut panics with a stack trace after the given duration. Useful for
@@ -102,9 +127,22 @@ func DiffStrings(s1, s2 string) []string {
 	return DiffStringSlices(strings.Fields(s1), strings.Fields(s2))
 }
 
+// SkipSlowTestUnlessCI skips the test unless we're running in a CI server.
+// Note that you can set CI_LOCAL=1 to run slow tests locally in a CI-like setup.
+func SkipSlowTestUnlessCI(t testing.TB) {
+	if !IsCI() {
+		t.Skip("skipping slow test in CI")
+	}
+}
+
 // IsCI reports whether we're running in a CI server.
 func IsCI() bool {
 	return (os.Getenv("CI") != "" || os.Getenv("CI_LOCAL") != "") && os.Getenv("CIRCLE_BRANCH") == ""
+}
+
+// IsRealCI reports whether we're running in a CI server, but not in a local CI setup.
+func IsRealCI() bool {
+	return IsCI() && os.Getenv("CI_LOCAL") == ""
 }
 
 // IsGitHubAction reports whether we're running in a GitHub Action.
@@ -113,7 +151,7 @@ func IsGitHubAction() bool {
 }
 
 // SupportsAll reports whether the running system supports all Hugo features,
-// e.g. Asciidoc, Pandoc etc.
+// e.g. AsciiDoc, Pandoc etc.
 func SupportsAll() bool {
 	return IsGitHubAction() || os.Getenv("CI_LOCAL") != ""
 }
@@ -122,6 +160,24 @@ func SupportsAll() bool {
 // e.g. 16 for Go 1.16.
 func GoMinorVersion() int {
 	return extractMinorVersionFromGoTag(runtime.Version())
+}
+
+// IsWindows reports whether this runs on Windows.
+func IsWindows() bool {
+	return runtime.GOOS == "windows"
+}
+
+// Is32Bit reports whether int is 32 bits wide, e.g. GOARCH=386.
+func Is32Bit() bool {
+	return strconv.IntSize == 32
+}
+
+// SkipSlowWasmTestOn32Bit skips heavy WebAssembly tests on 32-bit,
+// where Wazero falls back to its (much slower) interpreter.
+func SkipSlowWasmTestOn32Bit(t testing.TB) {
+	if Is32Bit() {
+		t.Skip("skipping slow Wasm test on 32-bit")
+	}
 }
 
 var goMinorVersionRe = regexp.MustCompile(`go1.(\d*)`)
@@ -140,5 +196,33 @@ func extractMinorVersionFromGoTag(tag string) int {
 
 	// a commit hash, not useful.
 	return -1
+}
 
+// NewPinnedRunner creates a new runner that will only Run tests matching the given regexp.
+// This is added mostly to use in combination with https://marketplace.visualstudio.com/items?itemName=windmilleng.vscode-go-autotest
+func NewPinnedRunner(t testing.TB, pinnedTestRe string) *PinnedRunner {
+	if pinnedTestRe == "" {
+		pinnedTestRe = ".*"
+	}
+	pinnedTestRe = strings.ReplaceAll(pinnedTestRe, "_", " ")
+	re := regexp.MustCompile("(?i)" + pinnedTestRe)
+	return &PinnedRunner{
+		c:  qt.New(t),
+		re: re,
+	}
+}
+
+type PinnedRunner struct {
+	c  *qt.C
+	re *regexp.Regexp
+}
+
+func (r *PinnedRunner) Run(name string, f func(c *qt.C)) bool {
+	if !r.re.MatchString(name) {
+		if IsGitHubAction() {
+			r.c.Fatal("found pinned test when running in CI")
+		}
+		return true
+	}
+	return r.c.Run(name, f)
 }

@@ -1,346 +1,173 @@
 ---
-title: "Image Processing"
-description: "Image Page resources can be resized and cropped."
-date: 2018-01-24T13:10:00-05:00
-linktitle: "Image Processing"
-categories: ["content management"]
-keywords: [resources, images]
-weight: 4004
-draft: false
-toc: true
-menu:
-  docs:
-    parent: "content-management"
-    weight: 32
+title: Image processing
+description: Transform images to change their size, shape, and appearance.
+categories: []
+keywords: []
 ---
 
-## The Image Page Resource
+Hugo provides methods to transform and analyze images during the build process. While Hugo can manage any image format as a resource, only [processable images](g) can be transformed using the methods below. The results are cached to ensure subsequent builds remain fast.
 
-The `image` is a [Page Resource]({{< relref "/content-management/page-resources" >}}), and the processing methods listed below do not work on images inside your `/static` folder.
+> [!NOTE]
+> Use the [`reflect.IsImageResourceProcessable`][] function to verify that an image can be processed.
 
-To print all images paths in a [Page Bundle]({{< relref "/content-management/organization#page-bundles" >}}):
+## Resources
+
+To process an image you must capture the file as a page resource, a global resource, or a remote resource.
+
+### Page
+
+{{% glossary-term "page resource" %}}
+
+```tree
+content/
+└── posts/
+    └── post-1/           <-- page bundle
+        ├── index.md
+        └── sunset.jpg    <-- page resource
+```
+
+To capture an image as a page resource:
 
 ```go-html-template
-{{ with .Resources.ByType "image" }}
-{{ range . }}
-{{ .RelPermalink }}
-{{ end }}
-{{ end }}
-
+{{ $image := .Resources.Get "sunset.jpg" }}
 ```
 
-## The Image Resource
+### Global
 
-The `image` resource can also be retrieved from a [global resource]({{< relref "/hugo-pipes/introduction#from-file-to-resource" >}})
+{{% glossary-term "global resource" %}}
+
+```tree
+assets/
+└── images/
+    └── sunset.jpg    <-- global resource
+```
+
+To capture an image as a global resource:
 
 ```go-html-template
-{{- $image := resources.Get "images/logo.jpg" -}}
+{{ $image := resources.Get "images/sunset.jpg" }}
 ```
 
-## Image Processing Methods
+### Remote
 
-The `image` resource implements the  `Resize`, `Fit`, `Fill`, and `Filter` methods, each returning a transformed image using the specified dimensions and processing options. 
+{{% glossary-term "remote resource" %}}
 
-{{% note %}}
-Metadata (EXIF, IPTC, XMP, etc.) is not preserved during image transformation. Use the [`Exif`](#exif) method with the _original_ image to extract EXIF metadata from JPEG or TIFF images.
-{{% /note %}}
-
-### Resize
-
-Resizes the image to the specified width and height.
-
-```go
-// Resize to a width of 600px and preserve ratio
-{{ $image := $resource.Resize "600x" }}
-
-// Resize to a height of 400px and preserve ratio
-{{ $image := $resource.Resize "x400" }}
-
-// Resize to a width 600px and a height of 400px
-{{ $image := $resource.Resize "600x400" }}
-```
-
-### Fit
-
-Scale down the image to fit the given dimensions while maintaining aspect ratio. Both height and width are required.
-
-```go
-{{ $image := $resource.Fit "600x400" }}
-```
-
-### Fill
-
-Resize and crop the image to match the given dimensions. Both height and width are required.
-
-```go
-{{ $image := $resource.Fill "600x400" }}
-```
-
-### Filter
-
-Apply one or more filters to your image. See [Image Filters](/functions/images/#image-filters) for a full list.
+To capture an image as a remote resource:
 
 ```go-html-template
-{{ $img = $img.Filter (images.GaussianBlur 6) (images.Pixelate 8) }}
+{{ $image := resources.GetRemote "https://gohugo.io/img/hugo-logo.png" }}
 ```
 
-The above can also be written in a more functional style using pipes:
+## Rendering
+
+Once you have captured an image as a resource, render it in your templates using the [`Permalink`][], [`RelPermalink`][], [`Width`][], and [`Height`][] methods.
+
+Example 1: Throw an error if the resource is not found.
 
 ```go-html-template
-{{ $img = $img | images.Filter (images.GaussianBlur 6) (images.Pixelate 8) }}
+{{ $image := .Resources.GetMatch "sunset.jpg" }}
+<img src="{{ $image.RelPermalink }}" width="{{ $image.Width }}" height="{{ $image.Height }}">
 ```
 
-The filters will be applied in the given order.
-
-Sometimes it can be useful to create the filter chain once and then reuse it:
+Example 2: Skip image rendering if the resource is not found.
 
 ```go-html-template
-{{ $filters := slice  (images.GaussianBlur 6) (images.Pixelate 8) }}
-{{ $img1 = $img1.Filter $filters }}
-{{ $img2 = $img2.Filter $filters }}
-```
-
-### Exif
-
-Provides an [Exif](https://en.wikipedia.org/wiki/Exif) object with metadata about the image.
-
-Note that this is only supported for JPEG and TIFF images, so it's recommended to wrap the access with a `with`, e.g.:
-
-```go-html-template
-{{ with $img.Exif }}
-Date: {{ .Date }}
-Lat/Long: {{ .Lat}}/{{ .Long }}
-Tags:
-{{ range $k, $v := .Tags }}
-TAG: {{ $k }}: {{ $v }}
-{{ end }}
+{{ $image := .Resources.GetMatch "sunset.jpg" }}
+{{ with $image }}
+  <img src="{{ .RelPermalink }}" width="{{ .Width }}" height="{{ .Height }}">
 {{ end }}
 ```
 
-Or individually access EXIF data with dot access, e.g.:
+Example 3: A more concise way to skip image rendering if the resource is not found.
 
 ```go-html-template
-{{ with $src.Exif }}
-  <ul>
-      {{ with .Date }}<li>Date: {{ .Format "January 02, 2006" }}</li>{{ end }}
-      {{ with .Tags.ApertureValue }}<li>Aperture: {{ lang.NumFmt 2 . }}</li>{{ end }}
-      {{ with .Tags.BrightnessValue }}<li>Brightness: {{ lang.NumFmt 2 . }}</li>{{ end }}
-      {{ with .Tags.ExposureTime }}<li>Exposure Time: {{ . }}</li>{{ end }}
-      {{ with .Tags.FNumber }}<li>F Number: {{ . }}</li>{{ end }}
-      {{ with .Tags.FocalLength }}<li>Focal Length: {{ . }}</li>{{ end }}
-      {{ with .Tags.ISOSpeedRatings }}<li>ISO Speed Ratings: {{ . }}</li>{{ end }}
-      {{ with .Tags.LensModel }}<li>Lens Model: {{ . }}</li>{{ end }}
-  </ul>
+{{ with .Resources.GetMatch "sunset.jpg" }}
+  <img src="{{ .RelPermalink }}" width="{{ .Width }}" height="{{ .Height }}">
 {{ end }}
 ```
 
-Some fields may need to be formatted with [`lang.FormatNumberCustom`]({{< relref "functions/lang" >}}) function to prevent display like `Aperture: 2.278934289` instead of `Aperture: 2.28`.
-
-#### Exif fields
-
-Date
-: "photo taken" date/time
-
-Lat
-: "photo taken where", GPS latitude
-
-Long
-: "photo taken where", GPS longitude
-
-See [Image Processing Config](#image-processing-config) for how to configure what gets included in Exif.
-
-## Image Processing Options
-
-In addition to the dimensions (e.g. `600x400`), Hugo supports a set of additional image options.
-
-### Background Color
-
-The background color to fill into the transparency layer. This is mostly useful when converting to a format that does not support transparency, e.g. `JPEG`.
-
-You can set the background color to use with a 3 or 6 digit hex code starting with `#`.
-
-```go
-{{ $image.Resize "600x jpg #b31280" }}
-```
-
-For color codes, see https://www.google.com/search?q=color+picker
-
-**Note** that you also set a default background color to use, see [Image Processing Config](#image-processing-config).
-
-### JPEG and WebP Quality
-
-Only relevant for JPEG and WebP images, values 1 to 100 inclusive, higher is better. Default is 75.
-
-```go
-{{ $image.Resize "600x q50" }}
-```
-
-{{< new-in "0.83.0" >}} WebP support was added in Hugo 0.83.0.
-
-### Hint
-
- {{< new-in "0.83.0" >}}
-
- {{< new-in "0.83.0" >}}
-
-Hint about what type of image this is. Currently only used when encoding to WebP.
-
-Default value is `photo`.
-
-Valid values are `picture`, `photo`, `drawing`, `icon`, or `text`.
-
-```go
-{{ $image.Resize "600x webp drawing" }}
-```
-
-### Rotate
-
-Rotates an image by the given angle counter-clockwise. The rotation will be performed first to get the dimensions correct. The main use of this is to be able to manually correct for [EXIF orientation](https://github.com/golang/go/issues/4341) of JPEG images.
-
-```go
-{{ $image.Resize "600x r90" }}
-```
-
-### Anchor
-
-Only relevant for the `Fill` method. This is useful for thumbnail generation where the main motive is located in, say, the left corner.
-
-Valid values are `Smart`, `Center`, `TopLeft`, `Top`, `TopRight`, `Left`, `Right`, `BottomLeft`, `Bottom`, `BottomRight`.
-
-Default value is `Smart`, which uses [Smartcrop](https://github.com/muesli/smartcrop) to determine the best crop.
-
-```go
-{{ $image.Fill "300x200 BottomLeft" }}
-```
-
-### Resample Filter
-
-Filter used in resizing. Default is `Box`, a simple and fast resampling filter appropriate for downscaling.
-
-Examples are: `Box`, `NearestNeighbor`, `Linear`, `Gaussian`.
-
-See https://github.com/disintegration/imaging for more. If you want to trade quality for faster processing, this may be a option to test.
-
-```go
-{{ $image.Resize "600x400 Gaussian" }}
-```
-
-### Target Format
-
-By default the images is encoded in the source format, but you can set the target format as an option.
-
-Valid values are `bmp`, `gif`, `jpeg`, `jpg`, `png`, `tif`, `tiff`, and `webp`.
-
-```go
-{{ $image.Resize "600x jpg" }}
-```
-
-{{< new-in "0.83.0" >}} WebP support was added in Hugo 0.83.0.
-
-## Image Processing Examples
-
-_The photo of the sunset used in the examples below is Copyright [Bjørn Erik Pedersen](https://commons.wikimedia.org/wiki/User:Bep) (Creative Commons Attribution-Share Alike 4.0 International license)_
-
-{{< imgproc sunset Resize "300x" />}}
-
-{{< imgproc sunset Fill "90x120 left" />}}
-
-{{< imgproc sunset Fill "90x120 right" />}}
-
-{{< imgproc sunset Fit "90x90" />}}
-
-{{< imgproc sunset Resize "300x q10" />}}
-
-This is the shortcode used in the examples above:
-
-{{< code file="layouts/shortcodes/imgproc.html" >}}
-{{< readfile file="layouts/shortcodes/imgproc.html" >}}  
-{{< /code >}}
-
-And it is used like this:
+Example 4: Skip rendering if there's problem accessing a remote resource.
 
 ```go-html-template
-{{</* imgproc sunset Resize "300x" /*/>}}
+{{ $url := "https://gohugo.io/img/hugo-logo.png" }}
+{{ with try (resources.GetRemote $url) }}
+  {{ with .Err }}
+    {{ errorf "%s" . }}
+  {{ else with .Value }}
+    <img src="{{ .RelPermalink }}" width="{{ .Width }}" height="{{ .Height }}">
+  {{ else }}
+    {{ errorf "Unable to get remote resource %q" $url }}
+  {{ end }}
+{{ end }}
 ```
 
-{{% note %}}
-**Tip:** Note the self-closing shortcode syntax above. The `imgproc` shortcode can be called both with and without **inner content**.
-{{% /note %}}
+{{% include "/_common/functions/reflect/image-reflection-functions.md" %}}
 
-## Image Processing Config
+## Processing
 
-You can configure an `imaging` section in `config.toml` with default image processing options:
+To transform an image, apply a processing method to the image resource. Hugo generates the processed image on demand, caches the result, and returns a new resource object.
+
+```go-html-template
+{{ with .Resources.Get "sunset.jpg" }}
+  {{ with .Resize "400x" }}
+    <img src="{{ .RelPermalink }}" width="{{ .Width }}" height="{{ .Height }}">
+  {{ end }}
+{{ end }}
+```
+
+> [!NOTE]
+> Metadata is not preserved during image transformation. Use the [`Meta`][] method with the original image resource to extract metadata from supported formats.
+
+Select a method from the table below for syntax and usage examples, depending on your specific transformation or metadata requirements:
+
+{{% render-table-of-pages-in-section
+  path=/methods/resource
+  filter=methods_resource_image_processing
+  filterType=include
+  headingColumn1=Method
+  headingColumn2=Description
+%}}{class="!mt-0"}
+
+## Performance
+
+Consider these factors when processing a large number of images.
+
+### Caching
+
+Hugo processes images on demand and returns a new resource object. To ensure subsequent builds remain fast, Hugo caches the results in the directory specified in the [file cache][] section of your project configuration.
+
+If you deploy your site to a [CI/CD](g) platform, follow the platform-specific instructions in the [hosting guides][] to persist the image cache between builds. These instructions include setting the location of the image cache in your project configuration:
 
 ```toml
-[imaging]
-# Default resample filter used for resizing. Default is Box,
-# a simple and fast averaging filter appropriate for downscaling.
-# See https://github.com/disintegration/imaging
-resampleFilter = "box"
-
-# Default JPEG or WebP quality setting. Default is 75.
-quality = 75
-
-# Default hint about what type of image. Currently only used for WebP encoding.
-# Default is "photo".
-# Valid values are "picture", "photo", "drawing", "icon", or "text".
-hint = "photo"
-
-# Anchor used when cropping pictures.
-# Default is "smart" which does Smart Cropping, using https://github.com/muesli/smartcrop
-# Smart Cropping is content aware and tries to find the best crop for each image.
-# Valid values are Smart, Center, TopLeft, Top, TopRight, Left, Right, BottomLeft, Bottom, BottomRight
-anchor = "smart"
-
-# Default background color.
-# Hugo will preserve transparency for target formats that supports it,
-# but will fall back to this color for JPEG.
-# Expects a standard HEX color string with 3 or 6 digits.
-# See https://www.google.com/search?q=color+picker
-bgColor = "#ffffff"
-
-[imaging.exif]
- # Regexp matching the fields you want to Exclude from the (massive) set of Exif info
-# available. As we cache this info to disk, this is for performance and
-# disk space reasons more than anything.
-# If you want it all, put ".*" in this config setting.
-# Note that if neither this or ExcludeFields is set, Hugo will return a small
-# default set.
-includeFields = ""
-
-# Regexp matching the Exif fields you want to exclude. This may be easier to use
-# than IncludeFields above, depending on what you want.
-excludeFields = ""
-
-# Hugo extracts the "photo taken" date/time into .Date by default.
-# Set this to true to turn it off.
-disableDate = false
-
-# Hugo extracts the "photo taken where" (GPS latitude and longitude) into
-# .Long and .Lat. Set this to true to turn it off.
-disableLatLong = false
+[caches]
+  [caches.images]
+    dir = ':cacheDir/images'
 ```
 
-## Smart Cropping of Images
+### Garbage collection
 
-By default, Hugo will use [Smartcrop](https://github.com/muesli/smartcrop), a library created by [muesli](https://github.com/muesli), when cropping images with `.Fill`. You can set the anchor point manually, but in most cases the smart option will make a good choice. And we will work with the library author to improve this in the future.
+If you change image processing methods, or rename/remove images, the cache will eventually contain unused files. To remove them and reclaim disk space, run Hugo's garbage collection:
 
-An example using the sunset image from above:
-
-{{< imgproc sunset Fill "200x200 smart" />}}
-
-## Image Processing Performance Consideration
-
-Processed images are stored below `<project-dir>/resources` (can be set with `resourceDir` config setting). This folder is deliberately placed in the project, as it is recommended to check these into source control as part of the project. These images are not "Hugo fast" to generate, but once generated they can be reused.
-
-If you change your image settings (e.g. size), remove or rename images etc., you will end up with unused images taking up space and cluttering your project.
-
-To clean up, run:
-
-```bash
-hugo --gc
+```sh
+hugo build --gc
 ```
 
-{{% note %}}
-**GC** is short for **Garbage Collection**.
-{{% /note %}}
+### Resource usage
+
+The time and memory required to process an image increase with the image's dimensions. For example, a `4032x2268` image requires significantly more memory and processing time than a `1920x1080` image.
+
+If your source images are much larger than the maximum size you intend to publish, consider scaling them down before the build to optimize performance.
+
+## Configuration
+
+See [configure imaging][].
+
+[`Height`]: /methods/resource/height/
+[`Meta`]: /methods/resource/meta/
+[`Permalink`]: /methods/resource/permalink/
+[`RelPermalink`]: /methods/resource/relpermalink/
+[`Width`]: /methods/resource/width/
+[`reflect.IsImageResourceProcessable`]: /functions/reflect/isimageresourceprocessable/
+[configure imaging]: /configuration/imaging/
+[file cache]: /configuration/caches/
+[hosting guides]: /host-and-deploy/deployment-methods/#push-to-a-git-repository

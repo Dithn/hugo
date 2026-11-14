@@ -1,4 +1,4 @@
-// Copyright 2017-present The Hugo Authors. All rights reserved.
+// Copyright 2024 The Hugo Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,35 +11,76 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package releaser implements a set of utilities and a wrapper around Goreleaser
-// to help automate the Hugo release process.
+// Package releaser implements a set of utilities to help automate the
+// Hugo release process.
 package releaser
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
-	"github.com/gohugoio/hugo/common/hexec"
-
-	"github.com/gohugoio/hugo/common/hugo"
-	"github.com/pkg/errors"
+	"github.com/gohugoio/hugo/common/version"
 )
 
 const commitPrefix = "releaser:"
+
+// New initializes a ReleaseHandler.
+// Note that version is only used for testig. In CI we derive the version from the branch name.
+func New(skipPush, try bool, step int, version string) (*ReleaseHandler, error) {
+	if step < 1 || step > 2 {
+		return nil, fmt.Errorf("step must be 1 or 2")
+	}
+
+	if version == "" {
+		prefix := "release-"
+		branch, err := git("rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			return nil, err
+		}
+		branch = strings.TrimSpace(branch)
+
+		if !strings.HasPrefix(branch, prefix) {
+			return nil, fmt.Errorf("branch %q is not a release branch", branch)
+		}
+
+		version = strings.TrimPrefix(branch, prefix)
+	}
+
+	version = strings.TrimPrefix(version, "v")
+
+	logf("Version: v%s\n", version)
+
+	rh := &ReleaseHandler{version: version, skipPush: skipPush, try: try, step: step}
+
+	if try {
+		rh.git = func(args ...string) (string, error) {
+			logln("git", strings.Join(args, " "))
+			return "", nil
+		}
+	} else {
+		rh.git = git
+	}
+
+	return rh, nil
+}
 
 // ReleaseHandler provides functionality to release a new version of Hugo.
 // Test this locally without doing an actual release:
 // go run -tags release main.go release --skip-publish --try -r 0.90.0
 // Or a variation of the above -- the skip-publish flag makes sure that any changes are performed to the local Git only.
 type ReleaseHandler struct {
-	cliVersion string
+	version string
 
-	skipPublish bool
+	// 1 or 2.
+	step int
+
+	// No remote pushes.
+	skipPush bool
 
 	// Just simulate, no actual changes.
 	try bool
@@ -47,142 +88,48 @@ type ReleaseHandler struct {
 	git func(args ...string) (string, error)
 }
 
-func (r ReleaseHandler) calculateVersions() (hugo.Version, hugo.Version) {
-	newVersion := hugo.MustParseVersion(r.cliVersion)
-	finalVersion := newVersion.Next()
-	finalVersion.PatchLevel = 0
-
-	if newVersion.Suffix != "-test" {
-		newVersion.Suffix = ""
-	}
-
-	finalVersion.Suffix = "-DEV"
-
-	return newVersion, finalVersion
-}
-
-// New initialises a ReleaseHandler.
-func New(version string, skipPublish, try bool) *ReleaseHandler {
-	// When triggered from CI release branch
-	version = strings.TrimPrefix(version, "release-")
-	version = strings.TrimPrefix(version, "v")
-	rh := &ReleaseHandler{cliVersion: version, skipPublish: skipPublish, try: try}
-
-	if try {
-		rh.git = func(args ...string) (string, error) {
-			fmt.Println("git", strings.Join(args, " "))
-			return "", nil
-		}
-	} else {
-		rh.git = git
-	}
-
-	return rh
-}
-
 // Run creates a new release.
 func (r *ReleaseHandler) Run() error {
-	if os.Getenv("GITHUB_TOKEN") == "" {
-		return errors.New("GITHUB_TOKEN not set, create one here with the repo scope selected: https://github.com/settings/tokens/new")
-	}
-
-	fmt.Printf("Start release from %q\n", wd())
-
 	newVersion, finalVersion := r.calculateVersions()
-
 	version := newVersion.String()
 	tag := "v" + version
-	isPatch := newVersion.PatchLevel > 0
-	mainVersion := newVersion
-	mainVersion.PatchLevel = 0
 
-	// Exit early if tag already exists
-	exists, err := tagExists(tag)
-	if err != nil {
-		return err
-	}
+	logf("New version %q (prerelease: %t), final version %q\n", newVersion, newVersion.IsAlphaBetaOrRC(), finalVersion)
 
-	if exists {
-		return fmt.Errorf("tag %q already exists", tag)
-	}
+	r.gitPull()
 
-	var changeLogFromTag string
+	defer r.gitPush()
 
-	if newVersion.PatchLevel == 0 {
-		// There may have been patch releases between, so set the tag explicitly.
-		changeLogFromTag = "v" + newVersion.Prev().String()
-		exists, _ := tagExists(changeLogFromTag)
-		if !exists {
-			// fall back to one that exists.
-			changeLogFromTag = ""
-		}
-	}
-
-	var (
-		gitCommits     gitInfos
-		gitCommitsDocs gitInfos
-	)
-
-	defer r.gitPush() // TODO(bep)
-
-	gitCommits, err = getGitInfos(changeLogFromTag, "hugo", "", !r.try)
-	if err != nil {
-		return err
-	}
-
-	// TODO(bep) explicit tag?
-	gitCommitsDocs, err = getGitInfos("", "hugoDocs", "../hugoDocs", !r.try)
-	if err != nil {
-		return err
-	}
-
-	releaseNotesFile, err := r.writeReleaseNotesToTemp(version, isPatch, gitCommits, gitCommitsDocs)
-	if err != nil {
-		return err
-	}
-
-	if _, err := r.git("add", releaseNotesFile); err != nil {
-		return err
-	}
-
-	commitMsg := fmt.Sprintf("%s Add release notes for %s", commitPrefix, newVersion)
-	commitMsg += "\n[ci skip]"
-
-	if _, err := r.git("commit", "-m", commitMsg); err != nil {
-		return err
-	}
-
-	if err := r.bumpVersions(newVersion); err != nil {
-		return err
-	}
-
-	if _, err := r.git("commit", "-a", "-m", fmt.Sprintf("%s Bump versions for release of %s\n\n[ci skip]", commitPrefix, newVersion)); err != nil {
-		return err
-	}
-
-	if _, err := r.git("tag", "-a", tag, "-m", fmt.Sprintf("%s %s\n\n[ci skip]", commitPrefix, newVersion)); err != nil {
-		return err
-	}
-
-	if !r.skipPublish {
-		if _, err := r.git("push", "origin", tag); err != nil {
+	if r.step == 1 {
+		if err := r.bumpVersions(newVersion); err != nil {
 			return err
 		}
-	}
 
-	if err := r.release(releaseNotesFile); err != nil {
-		return err
+		if _, err := r.git("commit", "-a", "-m", fmt.Sprintf("%s Bump versions for release of %s\n\n[ci skip]", commitPrefix, newVersion)); err != nil {
+			return err
+		}
+
+		// The above commit will be the target for this release, so print it to the console in a env friendly way.
+		sha, err := git("rev-parse", "HEAD")
+		if err != nil {
+			return err
+		}
+
+		// Hugoreleaser will do the actual release using these values.
+		if err := r.replaceInFile("hugoreleaser.env",
+			`HUGORELEASER_TAG=(\S*)`, "HUGORELEASER_TAG="+tag,
+			`HUGORELEASER_COMMITISH=(\S*)`, "HUGORELEASER_COMMITISH="+sha,
+		); err != nil {
+			return err
+		}
+		logf("HUGORELEASER_TAG=%s\n", tag)
+		logf("HUGORELEASER_COMMITISH=%s\n", sha)
+
+		return nil
 	}
 
 	if err := r.bumpVersions(finalVersion); err != nil {
 		return err
-	}
-
-	if !r.try {
-		// No longer needed.
-		if err := os.Remove(releaseNotesFile); err != nil {
-			return err
-		}
 	}
 
 	if _, err := r.git("commit", "-a", "-m", fmt.Sprintf("%s Prepare repository for %s\n\n[ci skip]", commitPrefix, finalVersion)); err != nil {
@@ -192,37 +139,7 @@ func (r *ReleaseHandler) Run() error {
 	return nil
 }
 
-func (r *ReleaseHandler) gitPush() {
-	if r.skipPublish {
-		return
-	}
-	if _, err := r.git("push", "origin", "HEAD"); err != nil {
-		log.Fatal("push failed:", err)
-	}
-}
-
-func (r *ReleaseHandler) release(releaseNotesFile string) error {
-	if r.try {
-		fmt.Println("Skip goreleaser...")
-		return nil
-	}
-
-	args := []string{"--parallelism", "3", "--timeout", "120m", "--rm-dist", "--release-notes", releaseNotesFile}
-	if r.skipPublish {
-		args = append(args, "--skip-publish")
-	}
-
-	cmd, _ := hexec.SafeCommand("goreleaser", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	if err != nil {
-		return errors.Wrap(err, "goreleaser failed")
-	}
-	return nil
-}
-
-func (r *ReleaseHandler) bumpVersions(ver hugo.Version) error {
+func (r *ReleaseHandler) bumpVersions(ver version.Version) error {
 	toDev := ""
 
 	if ver.Suffix != "" {
@@ -230,19 +147,9 @@ func (r *ReleaseHandler) bumpVersions(ver hugo.Version) error {
 	}
 
 	if err := r.replaceInFile("common/hugo/version_current.go",
-		`Number:(\s{4,})(.*),`, fmt.Sprintf(`Number:${1}%.2f,`, ver.Number),
-		`PatchLevel:(\s*)(.*),`, fmt.Sprintf(`PatchLevel:${1}%d,`, ver.PatchLevel),
-		`Suffix:(\s{4,})".*",`, fmt.Sprintf(`Suffix:${1}"%s",`, toDev)); err != nil {
-		return err
-	}
-
-	snapcraftGrade := "stable"
-	if ver.Suffix != "" {
-		snapcraftGrade = "devel"
-	}
-	if err := r.replaceInFile("snap/snapcraft.yaml",
-		`version: "(.*)"`, fmt.Sprintf(`version: "%s"`, ver),
-		`grade: (.*) #`, fmt.Sprintf(`grade: %s #`, snapcraftGrade)); err != nil {
+		`Minor:(\s*)(\d*),`, fmt.Sprintf(`Minor:${1}%d,`, ver.Minor),
+		`PatchLevel:(\s*)(\d*),`, fmt.Sprintf(`PatchLevel:${1}%d,`, ver.PatchLevel),
+		`Suffix:(\s*)".*",`, fmt.Sprintf(`Suffix:${1}"%s",`, toDev)); err != nil {
 		return err
 	}
 
@@ -263,6 +170,36 @@ func (r *ReleaseHandler) bumpVersions(ver hugo.Version) error {
 	return nil
 }
 
+func (r ReleaseHandler) calculateVersions() (version.Version, version.Version) {
+	newVersion := version.MustParseVersion(r.version)
+	var finalVersion version.Version
+	if newVersion.IsAlphaBetaOrRC() {
+		finalVersion = newVersion
+	} else {
+		finalVersion = newVersion.Next()
+	}
+
+	finalVersion.PatchLevel = 0
+	finalVersion.Suffix = "-DEV"
+
+	return newVersion, finalVersion
+}
+
+func (r *ReleaseHandler) gitPull() {
+	if _, err := r.git("pull", "origin", "HEAD"); err != nil {
+		log.Fatal("pull failed:", err)
+	}
+}
+
+func (r *ReleaseHandler) gitPush() {
+	if r.skipPush {
+		return
+	}
+	if _, err := r.git("push", "origin", "HEAD"); err != nil {
+		log.Fatal("push failed:", err)
+	}
+}
+
 func (r *ReleaseHandler) replaceInFile(filename string, oldNew ...string) error {
 	filename = filepath.FromSlash(filename)
 	fi, err := os.Stat(filename)
@@ -271,11 +208,11 @@ func (r *ReleaseHandler) replaceInFile(filename string, oldNew ...string) error 
 	}
 
 	if r.try {
-		fmt.Printf("Replace in %q: %q\n", filename, oldNew)
+		logf("Replace in %q: %q\n", filename, oldNew)
 		return nil
 	}
 
-	b, err := ioutil.ReadFile(filename)
+	b, err := os.ReadFile(filename)
 	if err != nil {
 		return err
 	}
@@ -286,18 +223,22 @@ func (r *ReleaseHandler) replaceInFile(filename string, oldNew ...string) error 
 		newContent = re.ReplaceAllString(newContent, oldNew[i+1])
 	}
 
-	return ioutil.WriteFile(filename, []byte(newContent), fi.Mode())
+	return os.WriteFile(filename, []byte(newContent), fi.Mode())
 }
 
-func isCI() bool {
-	return os.Getenv("CI") != ""
-}
-
-func wd() string {
-	p, err := os.Getwd()
+func git(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Fatal(err)
+		return "", fmt.Errorf("git failed: %q: %q (%q)", err, out, args)
 	}
-	return p
+	return string(out), nil
+}
 
+func logf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format, args...)
+}
+
+func logln(args ...any) {
+	fmt.Fprintln(os.Stderr, args...)
 }

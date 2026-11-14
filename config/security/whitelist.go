@@ -18,21 +18,29 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/gohugoio/hugo/hugofs/hglob"
 )
 
-const (
-	acceptNoneKeyword = "none"
-)
+const acceptNoneKeyword = "none"
 
 // Whitelist holds a whitelist.
+//
+// Patterns are regular expressions. A pattern prefixed with "! "
+// (see hglob.NegationPrefix) is a deny rule: a name that matches any
+// deny rule is rejected even if it matches an allow rule.
+// A whitelist made up exclusively of deny rules implicitly allows
+// names that do not match any of them.
 type Whitelist struct {
 	acceptNone bool
-	patterns   []*regexp.Regexp
+	allow      []*regexp.Regexp
+	deny       []*regexp.Regexp
 
-	// Store this for debugging/error reporting
+	// Store this for debugging/error reporting.
 	patternsStrings []string
 }
 
+// MarshalJSON is for internal use only.
 func (w Whitelist) MarshalJSON() ([]byte, error) {
 	if w.acceptNone {
 		return json.Marshal(acceptNoneKeyword)
@@ -43,14 +51,17 @@ func (w Whitelist) MarshalJSON() ([]byte, error) {
 
 // NewWhitelist creates a new Whitelist from zero or more patterns.
 // An empty patterns list or a pattern with the value 'none' will create
-// a whitelist that will Accept noone.
-func NewWhitelist(patterns ...string) Whitelist {
+// a whitelist that will Accept none. Patterns prefixed with "! " act as
+// deny rules; see Whitelist.
+func NewWhitelist(patterns ...string) (Whitelist, error) {
 	if len(patterns) == 0 {
-		return Whitelist{acceptNone: true}
+		return Whitelist{acceptNone: true}, nil
 	}
 
-	var acceptSome bool
-	var patternsStrings []string
+	var (
+		acceptSome      bool
+		patternsStrings []string
+	)
 
 	for _, p := range patterns {
 		if p == acceptNoneKeyword {
@@ -65,31 +76,58 @@ func NewWhitelist(patterns ...string) Whitelist {
 	}
 
 	if !acceptSome {
-		return Whitelist{
-			acceptNone: true,
+		return Whitelist{acceptNone: true}, nil
+	}
+
+	var allow, deny []*regexp.Regexp
+	for _, p := range patternsStrings {
+		raw := p
+		negate := strings.HasPrefix(p, hglob.NegationPrefix)
+		if negate {
+			raw = p[len(hglob.NegationPrefix):]
+		}
+		re, err := regexp.Compile(raw)
+		if err != nil {
+			return Whitelist{}, fmt.Errorf("failed to compile whitelist pattern %q: %w", p, err)
+		}
+		if negate {
+			deny = append(deny, re)
+		} else {
+			allow = append(allow, re)
 		}
 	}
 
-	var patternsr []*regexp.Regexp
-
-	for i := 0; i < len(patterns); i++ {
-		p := strings.TrimSpace(patterns[i])
-		if p == "" {
-			continue
-		}
-		patternsr = append(patternsr, regexp.MustCompile(p))
-	}
-
-	return Whitelist{patterns: patternsr, patternsStrings: patternsStrings}
+	return Whitelist{allow: allow, deny: deny, patternsStrings: patternsStrings}, nil
 }
 
-// Accepted reports whether name is whitelisted.
+// MustNewWhitelist creates a new Whitelist from zero or more patterns and panics on error.
+func MustNewWhitelist(patterns ...string) Whitelist {
+	w, err := NewWhitelist(patterns...)
+	if err != nil {
+		panic(err)
+	}
+	return w
+}
+
+// Accept reports whether name is whitelisted.
 func (w Whitelist) Accept(name string) bool {
 	if w.acceptNone {
 		return false
 	}
 
-	for _, p := range w.patterns {
+	for _, p := range w.deny {
+		if p.MatchString(name) {
+			return false
+		}
+	}
+
+	if len(w.allow) == 0 {
+		// A whitelist with only deny rules implicitly allows everything
+		// that is not denied. An empty (zero-value) whitelist rejects.
+		return len(w.deny) > 0
+	}
+
+	for _, p := range w.allow {
 		if p.MatchString(name) {
 			return true
 		}

@@ -1,4 +1,4 @@
-// Copyright 2019 The Hugo Authors. All rights reserved.
+// Copyright 2024 The Hugo Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,9 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package resources
+package resources_test
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -24,11 +25,15 @@ import (
 	"testing"
 
 	"github.com/gohugoio/hugo/htesting"
+	"github.com/gohugoio/hugo/identity"
+	"github.com/gohugoio/hugo/media"
+	"github.com/gohugoio/hugo/resources"
 
 	"github.com/gohugoio/hugo/common/herrors"
+	"github.com/gohugoio/hugo/common/hugio"
 	"github.com/gohugoio/hugo/hugofs"
 
-	"github.com/gohugoio/hugo/media"
+	"github.com/gohugoio/hugo/resources/images"
 	"github.com/gohugoio/hugo/resources/internal"
 
 	"github.com/gohugoio/hugo/helpers"
@@ -44,20 +49,22 @@ const gopher = `iVBORw0KGgoAAAANSUhEUgAAAEsAAAA8CAAAAAALAhhPAAAFfUlEQVRYw62XeWwU
 func gopherPNG() io.Reader { return base64.NewDecoder(base64.StdEncoding, strings.NewReader(gopher)) }
 
 func TestTransform(t *testing.T) {
-	c := qt.New(t)
-
-	createTransformer := func(spec *Spec, filename, content string) Transformer {
-		filename = filepath.FromSlash(filename)
-		fs := spec.Fs.Source
-		afero.WriteFile(fs, filename, []byte(content), 0777)
-		r, _ := spec.New(ResourceSourceDescriptor{Fs: fs, SourceFilename: filename})
-		return r.(Transformer)
+	createTransformer := func(c *qt.C, spec *resources.Spec, filename, content string) resources.Transformer {
+		targetPath := identity.CleanString(filename)
+		r, err := spec.NewResource(resources.ResourceSourceDescriptor{
+			TargetPath:         targetPath,
+			OpenReadSeekCloser: hugio.NewOpenReadSeekCloser(hugio.NewReadSeekerNoOpCloserFromString(content)),
+			GroupIdentity:      identity.StringIdentity(targetPath),
+		})
+		c.Assert(err, qt.IsNil)
+		c.Assert(r, qt.Not(qt.IsNil), qt.Commentf(filename))
+		return r.(resources.Transformer)
 	}
 
-	createContentReplacer := func(name, old, new string) ResourceTransformation {
+	createContentReplacer := func(name, old, new string) resources.ResourceTransformation {
 		return &testTransformation{
 			name: name,
-			transform: func(ctx *ResourceTransformationCtx) error {
+			transform: func(ctx *resources.ResourceTransformationCtx) error {
 				in := helpers.ReaderToString(ctx.From)
 				in = strings.Replace(in, old, new, 1)
 				ctx.AddOutPathIdentifier("." + name)
@@ -68,17 +75,23 @@ func TestTransform(t *testing.T) {
 	}
 
 	// Verify that we publish the same file once only.
-	assertNoDuplicateWrites := func(c *qt.C, spec *Spec) {
+	assertNoDuplicateWrites := func(c *qt.C, spec *resources.Spec) {
 		c.Helper()
-		d := spec.Fs.Destination.(hugofs.DuplicatesReporter)
-		c.Assert(d.ReportDuplicates(), qt.Equals, "")
+		hugofs.WalkFilesystems(spec.Fs.PublishDir, func(fs afero.Fs) bool {
+			if dfs, ok := fs.(hugofs.DuplicatesReporter); ok {
+				c.Assert(dfs.ReportDuplicates(), qt.Equals, "")
+			}
+			return false
+		})
 	}
 
-	assertShouldExist := func(c *qt.C, spec *Spec, filename string, should bool) {
+	assertShouldExist := func(c *qt.C, spec *resources.Spec, filename string, should bool) {
 		c.Helper()
-		exists, _ := helpers.Exists(filepath.FromSlash(filename), spec.Fs.Destination)
+		exists, _ := helpers.Exists(filepath.FromSlash(filename), spec.Fs.WorkingDirReadOnly)
 		c.Assert(exists, qt.Equals, should)
 	}
+
+	c := qt.New(t)
 
 	c.Run("All values", func(c *qt.C) {
 		c.Parallel()
@@ -87,14 +100,14 @@ func TestTransform(t *testing.T) {
 
 		transformation := &testTransformation{
 			name: "test",
-			transform: func(ctx *ResourceTransformationCtx) error {
+			transform: func(ctx *resources.ResourceTransformationCtx) error {
 				// Content
 				in := helpers.ReaderToString(ctx.From)
 				in = strings.Replace(in, "blue", "green", 1)
 				fmt.Fprint(ctx.To, in)
 
 				// Media type
-				ctx.OutMediaType = media.CSVType
+				ctx.OutMediaType = media.Builtin.CSVType
 
 				// Change target
 				ctx.ReplaceOutPathExtension(".csv")
@@ -106,19 +119,19 @@ func TestTransform(t *testing.T) {
 			},
 		}
 
-		r := createTransformer(spec, "f1.txt", "color is blue")
+		r := createTransformer(c, spec, "f1.txt", "color is blue")
 
 		tr, err := r.Transform(transformation)
 		c.Assert(err, qt.IsNil)
-		content, err := tr.(resource.ContentProvider).Content()
+		content, err := tr.(resource.ContentProvider).Content(context.Background())
 		c.Assert(err, qt.IsNil)
 
 		c.Assert(content, qt.Equals, "color is green")
-		c.Assert(tr.MediaType(), eq, media.CSVType)
+		c.Assert(tr.MediaType(), eq, media.Builtin.CSVType)
 		c.Assert(tr.RelPermalink(), qt.Equals, "/f1.csv")
 		assertShouldExist(c, spec, "public/f1.csv", true)
 
-		data := tr.Data().(map[string]interface{})
+		data := tr.Data().(map[string]any)
 		c.Assert(data["mydata"], qt.Equals, "Hugo Rocks!")
 
 		assertNoDuplicateWrites(c, spec)
@@ -131,24 +144,24 @@ func TestTransform(t *testing.T) {
 
 		transformation := &testTransformation{
 			name: "test",
-			transform: func(ctx *ResourceTransformationCtx) error {
+			transform: func(ctx *resources.ResourceTransformationCtx) error {
 				// Change media type only
-				ctx.OutMediaType = media.CSVType
+				ctx.OutMediaType = media.Builtin.CSVType
 				ctx.ReplaceOutPathExtension(".csv")
 
 				return nil
 			},
 		}
 
-		r := createTransformer(spec, "f1.txt", "color is blue")
+		r := createTransformer(c, spec, "f1.txt", "color is blue")
 
 		tr, err := r.Transform(transformation)
 		c.Assert(err, qt.IsNil)
-		content, err := tr.(resource.ContentProvider).Content()
+		content, err := tr.(resource.ContentProvider).Content(context.Background())
 		c.Assert(err, qt.IsNil)
 
 		c.Assert(content, qt.Equals, "color is blue")
-		c.Assert(tr.MediaType(), eq, media.CSVType)
+		c.Assert(tr.MediaType(), eq, media.Builtin.CSVType)
 
 		// The transformed file should only be published if RelPermalink
 		// or Permalink is called.
@@ -172,14 +185,14 @@ func TestTransform(t *testing.T) {
 
 		spec := newTestResourceSpec(specDescriptor{c: c})
 
-		// Two transformations with same id, different behaviour.
+		// Two transformations with same id, different behavior.
 		t1 := createContentReplacer("t1", "blue", "green")
 		t2 := createContentReplacer("t1", "color", "car")
 
-		for i, transformation := range []ResourceTransformation{t1, t2} {
-			r := createTransformer(spec, "f1.txt", "color is blue")
+		for i, transformation := range []resources.ResourceTransformation{t1, t2} {
+			r := createTransformer(c, spec, "f1.txt", "color is blue")
 			tr, _ := r.Transform(transformation)
-			content, err := tr.(resource.ContentProvider).Content()
+			content, err := tr.(resource.ContentProvider).Content(context.Background())
 			c.Assert(err, qt.IsNil)
 			c.Assert(content, qt.Equals, "color is green", qt.Commentf("i=%d", i))
 
@@ -194,24 +207,24 @@ func TestTransform(t *testing.T) {
 
 		fs := afero.NewMemMapFs()
 
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			spec := newTestResourceSpec(specDescriptor{c: c, fs: fs})
 
-			r := createTransformer(spec, "f1.txt", "color is blue")
+			r := createTransformer(c, spec, "f1.txt", "color is blue")
 
-			var transformation ResourceTransformation
+			var transformation resources.ResourceTransformation
 
 			if i == 0 {
 				// There is currently a hardcoded list of transformations that we
 				// persist to disk (tocss, postcss).
 				transformation = &testTransformation{
 					name: "tocss",
-					transform: func(ctx *ResourceTransformationCtx) error {
+					transform: func(ctx *resources.ResourceTransformationCtx) error {
 						in := helpers.ReaderToString(ctx.From)
 						in = strings.Replace(in, "blue", "green", 1)
 						ctx.AddOutPathIdentifier("." + "cached")
-						ctx.OutMediaType = media.CSVType
-						ctx.Data = map[string]interface{}{
+						ctx.OutMediaType = media.Builtin.CSVType
+						ctx.Data = map[string]any{
 							"Hugo": "Rocks!",
 						}
 						fmt.Fprint(ctx.To, in)
@@ -222,7 +235,7 @@ func TestTransform(t *testing.T) {
 				// Force read from file cache.
 				transformation = &testTransformation{
 					name: "tocss",
-					transform: func(ctx *ResourceTransformationCtx) error {
+					transform: func(ctx *resources.ResourceTransformationCtx) error {
 						return herrors.ErrFeatureNotAvailable
 					},
 				}
@@ -232,11 +245,11 @@ func TestTransform(t *testing.T) {
 
 			tr, _ := r.Transform(transformation)
 			c.Assert(tr.RelPermalink(), qt.Equals, "/f1.cached.txt", msg)
-			content, err := tr.(resource.ContentProvider).Content()
+			content, err := tr.(resource.ContentProvider).Content(context.Background())
 			c.Assert(err, qt.IsNil)
 			c.Assert(content, qt.Equals, "color is green", msg)
-			c.Assert(tr.MediaType(), eq, media.CSVType)
-			c.Assert(tr.Data(), qt.DeepEquals, map[string]interface{}{
+			c.Assert(tr.MediaType(), eq, media.Builtin.CSVType)
+			c.Assert(tr.Data(), qt.DeepEquals, map[string]any{
 				"Hugo": "Rocks!",
 			})
 
@@ -253,18 +266,18 @@ func TestTransform(t *testing.T) {
 
 		t1 := createContentReplacer("t1", "blue", "green")
 
-		r := createTransformer(spec, "f1.txt", "color is blue")
+		r := createTransformer(c, spec, "f1.txt", "color is blue")
 
 		tr, _ := r.Transform(t1)
 
 		relPermalink := tr.RelPermalink()
 
-		content, err := tr.(resource.ContentProvider).Content()
+		content, err := tr.(resource.ContentProvider).Content(context.Background())
 		c.Assert(err, qt.IsNil)
 
 		c.Assert(relPermalink, qt.Equals, "/f1.t1.txt")
 		c.Assert(content, qt.Equals, "color is green")
-		c.Assert(tr.MediaType(), eq, media.TextType)
+		c.Assert(tr.MediaType(), eq, media.Builtin.TextType)
 
 		assertNoDuplicateWrites(c, spec)
 		assertShouldExist(c, spec, "public/f1.t1.txt", true)
@@ -278,14 +291,14 @@ func TestTransform(t *testing.T) {
 		t1 := createContentReplacer("t1", "blue", "green")
 		t2 := createContentReplacer("t1", "color", "car")
 
-		r := createTransformer(spec, "f1.txt", "color is blue")
+		r := createTransformer(c, spec, "f1.txt", "color is blue")
 
 		tr, _ := r.Transform(t1, t2)
-		content, err := tr.(resource.ContentProvider).Content()
+		content, err := tr.(resource.ContentProvider).Content(context.Background())
 		c.Assert(err, qt.IsNil)
 
 		c.Assert(content, qt.Equals, "car is green")
-		c.Assert(tr.MediaType(), eq, media.TextType)
+		c.Assert(tr.MediaType(), eq, media.Builtin.TextType)
 
 		assertNoDuplicateWrites(c, spec)
 	})
@@ -298,14 +311,16 @@ func TestTransform(t *testing.T) {
 		t1 := createContentReplacer("t1", "blue", "green")
 		t2 := createContentReplacer("t2", "color", "car")
 
-		r := createTransformer(spec, "f1.txt", "color is blue")
+		r := createTransformer(c, spec, "f1.txt", "color is blue")
 
-		tr1, _ := r.Transform(t1)
-		tr2, _ := tr1.Transform(t2)
-
-		content1, err := tr1.(resource.ContentProvider).Content()
+		tr1, err := r.Transform(t1)
 		c.Assert(err, qt.IsNil)
-		content2, err := tr2.(resource.ContentProvider).Content()
+		tr2, err := tr1.Transform(t2)
+		c.Assert(err, qt.IsNil)
+
+		content1, err := tr1.(resource.ContentProvider).Content(context.Background())
+		c.Assert(err, qt.IsNil)
+		content2, err := tr2.(resource.ContentProvider).Content(context.Background())
 		c.Assert(err, qt.IsNil)
 
 		c.Assert(content1, qt.Equals, "color is green")
@@ -321,20 +336,20 @@ func TestTransform(t *testing.T) {
 
 		const count = 26 // A-Z
 
-		transformations := make([]ResourceTransformation, count)
-		for i := 0; i < count; i++ {
+		transformations := make([]resources.ResourceTransformation, count)
+		for i := range count {
 			transformations[i] = createContentReplacer(fmt.Sprintf("t%d", i), fmt.Sprint(i), string(rune(i+65)))
 		}
 
 		var countstr strings.Builder
-		for i := 0; i < count; i++ {
+		for i := range count {
 			countstr.WriteString(fmt.Sprint(i))
 		}
 
-		r := createTransformer(spec, "f1.txt", countstr.String())
+		r := createTransformer(c, spec, "f1.txt", countstr.String())
 
 		tr, _ := r.Transform(transformations...)
-		content, err := tr.(resource.ContentProvider).Content()
+		content, err := tr.(resource.ContentProvider).Content(context.Background())
 		c.Assert(err, qt.IsNil)
 
 		c.Assert(content, qt.Equals, "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -349,19 +364,19 @@ func TestTransform(t *testing.T) {
 
 		transformation := &testTransformation{
 			name: "test",
-			transform: func(ctx *ResourceTransformationCtx) error {
+			transform: func(ctx *resources.ResourceTransformationCtx) error {
 				ctx.AddOutPathIdentifier(".changed")
 				return nil
 			},
 		}
 
-		r := createTransformer(spec, "gopher.png", helpers.ReaderToString(gopherPNG()))
+		r := createTransformer(c, spec, "gopher.png", helpers.ReaderToString(gopherPNG()))
 
 		tr, err := r.Transform(transformation)
 		c.Assert(err, qt.IsNil)
-		c.Assert(tr.MediaType(), eq, media.PNGType)
+		c.Assert(tr.MediaType(), eq, media.Builtin.PNGType)
 
-		img, ok := tr.(resource.Image)
+		img, ok := tr.(images.ImageResource)
 		c.Assert(ok, qt.Equals, true)
 
 		c.Assert(img.Width(), qt.Equals, 75)
@@ -371,22 +386,15 @@ func TestTransform(t *testing.T) {
 		resizedPublished1, err := img.Resize("40x40")
 		c.Assert(err, qt.IsNil)
 		c.Assert(resizedPublished1.Height(), qt.Equals, 40)
-		c.Assert(resizedPublished1.RelPermalink(), qt.Equals, "/gopher.changed_hu2e827f5a78333ebc04166dd643235dea_1462_40x40_resize_linear_3.png")
-		assertShouldExist(c, spec, "public/gopher.changed_hu2e827f5a78333ebc04166dd643235dea_1462_40x40_resize_linear_3.png", true)
+		c.Assert(resizedPublished1.RelPermalink(), qt.Equals, "/gopher.changed_hu_dbaf8010a3fe3487.png")
+		assertShouldExist(c, spec, "public/gopher.changed_hu_dbaf8010a3fe3487.png", true)
 
 		// Permalink called.
 		resizedPublished2, err := img.Resize("30x30")
 		c.Assert(err, qt.IsNil)
 		c.Assert(resizedPublished2.Height(), qt.Equals, 30)
-		c.Assert(resizedPublished2.Permalink(), qt.Equals, "https://example.com/gopher.changed_hu2e827f5a78333ebc04166dd643235dea_1462_30x30_resize_linear_3.png")
-		assertShouldExist(c, spec, "public/gopher.changed_hu2e827f5a78333ebc04166dd643235dea_1462_30x30_resize_linear_3.png", true)
-
-		// Not published because none of RelPermalink or Permalink was called.
-		resizedNotPublished, err := img.Resize("50x50")
-		c.Assert(err, qt.IsNil)
-		c.Assert(resizedNotPublished.Height(), qt.Equals, 50)
-		// c.Assert(resized.RelPermalink(), qt.Equals, "/gopher.changed_hu2e827f5a78333ebc04166dd643235dea_1462_50x50_resize_linear_2.png")
-		assertShouldExist(c, spec, "public/gopher.changed_hu2e827f5a78333ebc04166dd643235dea_1462_50x50_resize_linear_3.png", false)
+		c.Assert(resizedPublished2.Permalink(), qt.Equals, "https://example.com/gopher.changed_hu_83657b4754113fc4.png")
+		assertShouldExist(c, spec, "public/gopher.changed_hu_83657b4754113fc4.png", true)
 
 		assertNoDuplicateWrites(c, spec)
 	})
@@ -394,25 +402,25 @@ func TestTransform(t *testing.T) {
 	c.Run("Concurrent", func(c *qt.C) {
 		spec := newTestResourceSpec(specDescriptor{c: c})
 
-		transformers := make([]Transformer, 10)
-		transformations := make([]ResourceTransformation, 10)
+		transformers := make([]resources.Transformer, 10)
+		transformations := make([]resources.ResourceTransformation, 10)
 
-		for i := 0; i < 10; i++ {
-			transformers[i] = createTransformer(spec, fmt.Sprintf("f%d.txt", i), fmt.Sprintf("color is %d", i))
+		for i := range 10 {
+			transformers[i] = createTransformer(c, spec, fmt.Sprintf("f%d.txt", i), fmt.Sprintf("color is %d", i))
 			transformations[i] = createContentReplacer("test", strconv.Itoa(i), "blue")
 		}
 
 		var wg sync.WaitGroup
 
-		for i := 0; i < 13; i++ {
+		for i := range 13 {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				for j := 0; j < 23; j++ {
+				for j := range 23 {
 					id := (i + j) % 10
 					tr, err := transformers[id].Transform(transformations[id])
 					c.Assert(err, qt.IsNil)
-					content, err := tr.(resource.ContentProvider).Content()
+					content, err := tr.(resource.ContentProvider).Content(context.Background())
 					c.Assert(err, qt.IsNil)
 					c.Assert(content, qt.Equals, "color is blue")
 					c.Assert(tr.RelPermalink(), qt.Equals, fmt.Sprintf("/f%d.test.txt", id))
@@ -427,13 +435,13 @@ func TestTransform(t *testing.T) {
 
 type testTransformation struct {
 	name      string
-	transform func(ctx *ResourceTransformationCtx) error
+	transform func(ctx *resources.ResourceTransformationCtx) error
 }
 
 func (t *testTransformation) Key() internal.ResourceTransformationKey {
 	return internal.NewResourceTransformationKey(t.name)
 }
 
-func (t *testTransformation) Transform(ctx *ResourceTransformationCtx) error {
+func (t *testTransformation) Transform(ctx *resources.ResourceTransformationCtx) error {
 	return t.transform(ctx)
 }

@@ -18,21 +18,24 @@ import (
 	"testing"
 
 	qt "github.com/frankban/quicktest"
-	"github.com/gohugoio/hugo/config"
-	"github.com/gohugoio/hugo/deps"
+	"github.com/gohugoio/hugo/common/paths"
+	"github.com/gohugoio/hugo/config/testconfig"
 )
 
-var ns = New(&deps.Deps{Cfg: config.New()})
+func newNs() *Namespace {
+	return New(testconfig.GetTestDeps(nil, nil))
+}
 
 type tstNoStringer struct{}
 
 func TestBase(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
+	ns := newNs()
 
 	for _, test := range []struct {
-		path   interface{}
-		expect interface{}
+		path   any
+		expect any
 	}{
 		{filepath.FromSlash(`foo/bar.txt`), `bar.txt`},
 		{filepath.FromSlash(`foo/bar/txt `), `txt `},
@@ -56,13 +59,45 @@ func TestBase(t *testing.T) {
 	}
 }
 
+func TestBaseName(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+	ns := newNs()
+
+	for _, test := range []struct {
+		path   any
+		expect any
+	}{
+		{filepath.FromSlash(`foo/bar.txt`), `bar`},
+		{filepath.FromSlash(`foo/bar/txt `), `txt `},
+		{filepath.FromSlash(`foo/bar.t`), `bar`},
+		{`foo.bar.txt`, `foo.bar`},
+		{`.x`, ``},
+		{``, `.`},
+		// errors
+		{tstNoStringer{}, false},
+	} {
+
+		result, err := ns.BaseName(test.path)
+
+		if b, ok := test.expect.(bool); ok && !b {
+			c.Assert(err, qt.Not(qt.IsNil))
+			continue
+		}
+
+		c.Assert(err, qt.IsNil)
+		c.Assert(result, qt.Equals, test.expect)
+	}
+}
+
 func TestDir(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
+	ns := newNs()
 
 	for _, test := range []struct {
-		path   interface{}
-		expect interface{}
+		path   any
+		expect any
 	}{
 		{filepath.FromSlash(`foo/bar.txt`), `foo`},
 		{filepath.FromSlash(`foo/bar/txt `), `foo/bar`},
@@ -89,10 +124,11 @@ func TestDir(t *testing.T) {
 func TestExt(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
+	ns := newNs()
 
 	for _, test := range []struct {
-		path   interface{}
-		expect interface{}
+		path   any
+		expect any
 	}{
 		{filepath.FromSlash(`foo/bar.json`), `.json`},
 		{`foo.bar.txt `, `.txt `},
@@ -117,23 +153,24 @@ func TestExt(t *testing.T) {
 func TestJoin(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
+	ns := newNs()
 
 	for _, test := range []struct {
-		elements interface{}
-		expect   interface{}
+		elements any
+		expect   any
 	}{
 		{
 			[]string{"", "baz", filepath.FromSlash(`foo/bar.txt`)},
 			`baz/foo/bar.txt`,
 		},
 		{
-			[]interface{}{"", "baz", DirFile{"big", "john"}, filepath.FromSlash(`foo/bar.txt`)},
+			[]any{"", "baz", paths.DirFile{Dir: "big", File: "john"}, filepath.FromSlash(`foo/bar.txt`)},
 			`baz/big|john/foo/bar.txt`,
 		},
 		{nil, ""},
 		// errors
 		{tstNoStringer{}, false},
-		{[]interface{}{"", tstNoStringer{}}, false},
+		{[]any{"", tstNoStringer{}}, false},
 	} {
 
 		result, err := ns.Join(test.elements)
@@ -151,15 +188,16 @@ func TestJoin(t *testing.T) {
 func TestSplit(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
+	ns := newNs()
 
 	for _, test := range []struct {
-		path   interface{}
-		expect interface{}
+		path   any
+		expect any
 	}{
-		{filepath.FromSlash(`foo/bar.txt`), DirFile{`foo/`, `bar.txt`}},
-		{filepath.FromSlash(`foo/bar/txt `), DirFile{`foo/bar/`, `txt `}},
-		{`foo.bar.txt`, DirFile{``, `foo.bar.txt`}},
-		{``, DirFile{``, ``}},
+		{filepath.FromSlash(`foo/bar.txt`), paths.DirFile{Dir: `foo/`, File: `bar.txt`}},
+		{filepath.FromSlash(`foo/bar/txt `), paths.DirFile{Dir: `foo/bar/`, File: `txt `}},
+		{`foo.bar.txt`, paths.DirFile{Dir: ``, File: `foo.bar.txt`}},
+		{``, paths.DirFile{Dir: ``, File: ``}},
 		// errors
 		{tstNoStringer{}, false},
 	} {
@@ -179,10 +217,11 @@ func TestSplit(t *testing.T) {
 func TestClean(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
+	ns := newNs()
 
 	for _, test := range []struct {
-		path   interface{}
-		expect interface{}
+		path   any
+		expect any
 	}{
 		{filepath.FromSlash(`foo/bar.txt`), `foo/bar.txt`},
 		{filepath.FromSlash(`foo/bar/txt`), `foo/bar/txt`},

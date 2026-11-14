@@ -16,22 +16,23 @@ package rst
 
 import (
 	"bytes"
+	"fmt"
+	"os/exec"
 	"runtime"
 
 	"github.com/gohugoio/hugo/common/hexec"
 	"github.com/gohugoio/hugo/htesting"
 
 	"github.com/gohugoio/hugo/identity"
-	"github.com/gohugoio/hugo/markup/internal"
 
 	"github.com/gohugoio/hugo/markup/converter"
+	"github.com/gohugoio/hugo/markup/internal"
 )
 
 // Provider is the package entry point.
 var Provider converter.ProviderProvider = provider{}
 
-type provider struct {
-}
+type provider struct{}
 
 func (p provider) New(cfg converter.ProviderConfig) (converter.Provider, error) {
 	return converter.NewProvider("rst", func(ctx converter.DocumentContext) (converter.Converter, error) {
@@ -47,7 +48,7 @@ type rstConverter struct {
 	cfg converter.ProviderConfig
 }
 
-func (c *rstConverter) Convert(ctx converter.RenderContext) (converter.Result, error) {
+func (c *rstConverter) Convert(ctx converter.RenderContext) (converter.ResultRender, error) {
 	b, err := c.getRstContent(ctx.Src, c.ctx)
 	if err != nil {
 		return nil, err
@@ -66,12 +67,15 @@ func (c *rstConverter) getRstContent(src []byte, ctx converter.DocumentContext) 
 	binaryName, binaryPath := getRstBinaryNameAndPath()
 
 	if binaryName == "" {
-		logger.Println("rst2html / rst2html.py not found in $PATH: Please install.\n",
-			"                 Leaving reStructuredText content unrendered.")
-		return src, nil
+		return nil, fmt.Errorf("rst2html / rst2html.py not found in $PATH, cannot render %q", ctx.DocumentName)
 	}
 
 	logger.Infoln("Rendering", ctx.DocumentName, "with", binaryName, "...")
+
+	args := []string{"--leave-comments", "--initial-header-level=2"}
+	if c.cfg.Conf != nil && c.cfg.MarkupConfig().RST.SyntaxHighlight != "long" {
+		args = append(args, "--syntax-highlight="+c.cfg.MarkupConfig().RST.SyntaxHighlight)
+	}
 
 	var result []byte
 	var err error
@@ -82,10 +86,9 @@ func (c *rstConverter) getRstContent(src []byte, ctx converter.DocumentContext) 
 	// handle Windows manually because it doesn't do shebangs
 	if runtime.GOOS == "windows" {
 		pythonBinary, _ := internal.GetPythonBinaryAndExecPath()
-		args := []string{binaryPath, "--leave-comments", "--initial-header-level=2"}
+		args = append([]string{binaryPath}, args...)
 		result, err = internal.ExternallyRenderContent(c.cfg, ctx, src, pythonBinary, args)
 	} else {
-		args := []string{"--leave-comments", "--initial-header-level=2"}
 		result, err = internal.ExternallyRenderContent(c.cfg, ctx, src, binaryName, args)
 	}
 
@@ -101,10 +104,7 @@ func (c *rstConverter) getRstContent(src []byte, ctx converter.DocumentContext) 
 
 	bodyEnd := bytes.Index(result, []byte("\n</body>"))
 	if bodyEnd < 0 || bodyEnd >= len(result) {
-		bodyEnd = len(result) - 1
-		if bodyEnd < 0 {
-			bodyEnd = 0
-		}
+		bodyEnd = max(len(result)-1, 0)
 	}
 
 	return result[bodyStart+7 : bodyEnd], err
@@ -132,4 +132,17 @@ func Supports() bool {
 		return true
 	}
 	return hasBin
+}
+
+// SupportsPygments returns whether Pygments is (or should be) installed on this computer.
+func SupportsPygments() bool {
+	for _, python := range []string{"python3", "python"} {
+		if err := exec.Command(python, "-c", "import pygments").Run(); err == nil {
+			return true
+		}
+	}
+	if htesting.SupportsAll() {
+		panic("Pygments not installed")
+	}
+	return false
 }

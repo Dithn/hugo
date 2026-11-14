@@ -17,6 +17,7 @@ package types
 import (
 	"fmt"
 	"reflect"
+	"sync/atomic"
 
 	"github.com/spf13/cast"
 )
@@ -27,10 +28,20 @@ type RLocker interface {
 	RUnlock()
 }
 
+type Locker interface {
+	Lock()
+	Unlock()
+}
+
+type RWLocker interface {
+	RLocker
+	Locker
+}
+
 // KeyValue is a interface{} tuple.
 type KeyValue struct {
-	Key   interface{}
-	Value interface{}
+	Key   any
+	Value any
 }
 
 // KeyValueStr is a string tuple.
@@ -41,8 +52,8 @@ type KeyValueStr struct {
 
 // KeyValues holds an key and a slice of values.
 type KeyValues struct {
-	Key    interface{}
-	Values []interface{}
+	Key    any
+	Values []any
 }
 
 // KeyString returns the key as a string, an empty string if conversion fails.
@@ -57,8 +68,8 @@ func (k KeyValues) String() string {
 // NewKeyValuesStrings takes a given key and slice of values and returns a new
 // KeyValues struct.
 func NewKeyValuesStrings(key string, values ...string) KeyValues {
-	iv := make([]interface{}, len(values))
-	for i := 0; i < len(values); i++ {
+	iv := make([]any, len(values))
+	for i := range values {
 		iv[i] = values[i]
 	}
 	return KeyValues{Key: key, Values: iv}
@@ -71,14 +82,14 @@ type Zeroer interface {
 }
 
 // IsNil reports whether v is nil.
-func IsNil(v interface{}) bool {
+func IsNil(v any) bool {
 	if v == nil {
 		return true
 	}
 
 	value := reflect.ValueOf(v)
 	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
 		return value.IsNil()
 	}
 
@@ -90,3 +101,58 @@ func IsNil(v interface{}) bool {
 type DevMarker interface {
 	DevOnly()
 }
+
+// Unwrapper is implemented by types that can unwrap themselves.
+type Unwrapper interface {
+	// Unwrapv is for internal use only.
+	// It got its slightly odd name to prevent collisions with user types.
+	Unwrapv() any
+}
+
+// Unwrap returns the underlying value of v if it implements Unwrapper, otherwise v is returned.
+func Unwrapv(v any) any {
+	if u, ok := v.(Unwrapper); ok {
+		return u.Unwrapv()
+	}
+	return v
+}
+
+// LowHigh represents a byte or slice boundary.
+type LowHigh[S ~[]byte | string] struct {
+	Low  int
+	High int
+}
+
+func (l LowHigh[S]) IsZero() bool {
+	return l.Low < 0 || (l.Low == 0 && l.High == 0)
+}
+
+func (l LowHigh[S]) Value(source S) S {
+	return source[l.Low:l.High]
+}
+
+// This is only used for debugging purposes.
+var InvocationCounter atomic.Int64
+
+// WeightProvider provides a weight.
+type WeightProvider interface {
+	Weight() int
+}
+
+// Weight0Provider provides a weight that's considered before the WeightProvider in sorting.
+// This allows the weight set on a given term to win.
+type Weight0Provider interface {
+	Weight0() int
+}
+
+// PrintableValueProvider is implemented by types that can provide a printable value.
+type PrintableValueProvider interface {
+	PrintableValue() any
+}
+
+type (
+	Strings2 [2]string
+	Strings3 [3]string
+	Ints2    [2]int
+	Ints3    [3]int
+)

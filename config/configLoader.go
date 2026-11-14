@@ -1,4 +1,4 @@
-// Copyright 2018 The Hugo Authors. All rights reserved.
+// Copyright 2025 The Hugo Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,27 +14,38 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/gohugoio/hugo/common/herrors"
-
-	"github.com/pkg/errors"
+	"github.com/gohugoio/hugo/common/hmaps"
+	"github.com/gohugoio/hugo/parser"
 
 	"github.com/gohugoio/hugo/common/paths"
 
-	"github.com/gohugoio/hugo/common/maps"
 	"github.com/gohugoio/hugo/parser/metadecoders"
 	"github.com/spf13/afero"
 )
 
 var (
+	// See issue #8979 for context.
+	// Hugo has always used config.toml etc. as the default config file name.
+	// But hugo.toml is a more descriptive name, but we need to check for both.
+	DefaultConfigNames = []string{"hugo", "config"}
+
+	DefaultConfigNamesSet = make(map[string]bool)
+
 	ValidConfigFileExtensions                    = []string{"toml", "yaml", "yml", "json"}
 	validConfigFileExtensionsMap map[string]bool = make(map[string]bool)
 )
 
 func init() {
+	for _, name := range DefaultConfigNames {
+		DefaultConfigNamesSet[name] = true
+	}
+
 	for _, ext := range ValidConfigFileExtensions {
 		validConfigFileExtensionsMap[ext] = true
 	}
@@ -45,6 +56,25 @@ func init() {
 func IsValidConfigFilename(filename string) bool {
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(filename), "."))
 	return validConfigFileExtensionsMap[ext]
+}
+
+// FromTOMLConfigString creates a config from the given TOML config. This is useful in tests.
+func FromTOMLConfigString(config string) Provider {
+	cfg, err := FromConfigString(config, "toml")
+	if err != nil {
+		panic(err)
+	}
+	return cfg
+}
+
+// FromMapToTOMLString converts the given map to a TOML string. This is useful in tests.
+func FromMapToTOMLString(v map[string]any) string {
+	var sb strings.Builder
+	err := parser.InterfaceToConfig(v, metadecoders.TOML, &sb)
+	if err != nil {
+		panic(err)
+	}
+	return sb.String()
 }
 
 // FromConfigString creates a config from the given YAML, JSON or TOML config. This is useful in tests.
@@ -60,18 +90,25 @@ func FromConfigString(config, configType string) (Provider, error) {
 func FromFile(fs afero.Fs, filename string) (Provider, error) {
 	m, err := loadConfigFromFile(fs, filename)
 	if err != nil {
-		return nil, herrors.WithFileContextForFileDefault(err, filename, fs)
+		fe := herrors.UnwrapFileError(err)
+		if fe != nil {
+			pos := fe.Position()
+			pos.Filename = filename
+			fe.UpdatePosition(pos)
+			return nil, err
+		}
+		return nil, herrors.NewFileErrorFromFile(err, filename, fs, nil)
 	}
 	return NewFrom(m), nil
 }
 
 // FromFileToMap is the same as FromFile, but it returns the config values
 // as a simple map.
-func FromFileToMap(fs afero.Fs, filename string) (map[string]interface{}, error) {
+func FromFileToMap(fs afero.Fs, filename string) (map[string]any, error) {
 	return loadConfigFromFile(fs, filename)
 }
 
-func readConfig(format metadecoders.Format, data []byte) (map[string]interface{}, error) {
+func readConfig(format metadecoders.Format, data []byte) (map[string]any, error) {
 	m, err := metadecoders.Default.UnmarshalToMap(data, format)
 	if err != nil {
 		return nil, err
@@ -82,7 +119,7 @@ func readConfig(format metadecoders.Format, data []byte) (map[string]interface{}
 	return m, nil
 }
 
-func loadConfigFromFile(fs afero.Fs, filename string) (map[string]interface{}, error) {
+func loadConfigFromFile(fs afero.Fs, filename string) (map[string]any, error) {
 	m, err := metadecoders.Default.UnmarshalFileToMap(fs, filename)
 	if err != nil {
 		return nil, err
@@ -132,14 +169,15 @@ func LoadConfigFromDir(sourceFs afero.Fs, configDir, environment string) (Provid
 			if err != nil {
 				// This will be used in error reporting, use the most specific value.
 				dirnames = []string{path}
-				return errors.Wrapf(err, "failed to unmarshl config for path %q", path)
+				return fmt.Errorf("failed to unmarshal config for path %q: %w", path, err)
 			}
 
 			var keyPath []string
-
-			if name != "config" {
+			var unwrapKey string
+			if !DefaultConfigNamesSet[name] {
 				// Can be params.jp, menus.en etc.
 				name, lang := paths.FileAndExtNoDelimiter(name)
+				unwrapKey = name
 
 				keyPath = []string{name}
 
@@ -154,15 +192,25 @@ func LoadConfigFromDir(sourceFs afero.Fs, configDir, environment string) (Provid
 				}
 			}
 
+			// TOML/YAML can't represent a headless top-level array, so allow a
+			// file to wrap its content under a single top-level key matching
+			// the basename (e.g. cascade.yaml with `cascade: [...]`).
+			var itemValue any = item
+			if unwrapKey != "" && len(item) == 1 {
+				if inner, ok := item[unwrapKey]; ok {
+					itemValue = inner
+				}
+			}
+
 			root := item
 			if len(keyPath) > 0 {
-				root = make(map[string]interface{})
+				root = make(map[string]any)
 				m := root
 				for i, key := range keyPath {
 					if i >= len(keyPath)-1 {
-						m[key] = item
+						m[key] = itemValue
 					} else {
-						nm := make(map[string]interface{})
+						nm := make(map[string]any)
 						m[key] = nm
 						m = nm
 					}
@@ -184,18 +232,16 @@ func LoadConfigFromDir(sourceFs afero.Fs, configDir, environment string) (Provid
 	}
 
 	return cfg, dirnames, nil
-
 }
 
-var keyAliases maps.KeyRenamer
+var keyAliases hmaps.KeyRenamer
 
 func init() {
 	var err error
-	keyAliases, err = maps.NewKeyRenamer(
+	keyAliases, err = hmaps.NewKeyRenamer(
 		// Before 0.53 we used singular for "menu".
 		"{menu,languages/*/menu}", "menus",
 	)
-
 	if err != nil {
 		panic(err)
 	}
@@ -203,6 +249,6 @@ func init() {
 
 // RenameKeys renames config keys in m recursively according to a global Hugo
 // alias definition.
-func RenameKeys(m map[string]interface{}) {
+func RenameKeys(m map[string]any) {
 	keyAliases.Rename(m)
 }

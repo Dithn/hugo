@@ -15,131 +15,74 @@
 package lang
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
 
-	"github.com/gohugoio/locales"
-	translators "github.com/gohugoio/localescompressed"
-	"github.com/pkg/errors"
-
-	"github.com/gohugoio/hugo/deps"
+	"github.com/gohugoio/hugo/common/hreflect"
+	"github.com/gohugoio/hugo/langs"
 	"github.com/spf13/cast"
 )
 
+var _ langs.LanguageTranslateOps = (*Namespace)(nil)
+
 // New returns a new instance of the lang-namespaced template functions.
-func New(deps *deps.Deps, translator locales.Translator) *Namespace {
+func New(language *langs.Language) *Namespace {
 	return &Namespace{
-		translator: translator,
-		deps:       deps,
+		language: language,
 	}
 }
 
 // Namespace provides template functions for the "lang" namespace.
 type Namespace struct {
-	translator locales.Translator
-	deps       *deps.Deps
+	language *langs.Language
 }
 
 // Translate returns a translated string for id.
-func (ns *Namespace) Translate(id interface{}, args ...interface{}) (string, error) {
-	var templateData interface{}
-
-	if len(args) > 0 {
-		if len(args) > 1 {
-			return "", errors.Errorf("wrong number of arguments, expecting at most 2, got %d", len(args)+1)
-		}
-		templateData = args[0]
-	}
-
-	sid, err := cast.ToStringE(id)
-	if err != nil {
-		return "", nil
-	}
-
-	return ns.deps.Translate(sid, templateData), nil
+func (ns *Namespace) Translate(ctx context.Context, id any, args ...any) (string, error) {
+	return ns.language.Translate(ctx, id, args...)
 }
 
 // FormatNumber formats number with the given precision for the current language.
-func (ns *Namespace) FormatNumber(precision, number interface{}) (string, error) {
-	p, n, err := ns.castPrecisionNumber(precision, number)
-	if err != nil {
-		return "", err
-	}
-	return ns.translator.FmtNumber(n, p), nil
+func (ns *Namespace) FormatNumber(precision, number any) (string, error) {
+	return ns.language.FormatNumber(precision, number)
 }
 
 // FormatPercent formats number with the given precision for the current language.
 // Note that the number is assumed to be a percentage.
-func (ns *Namespace) FormatPercent(precision, number interface{}) (string, error) {
-	p, n, err := ns.castPrecisionNumber(precision, number)
-	if err != nil {
-		return "", err
-	}
-	return ns.translator.FmtPercent(n, p), nil
+func (ns *Namespace) FormatPercent(precision, number any) (string, error) {
+	return ns.language.FormatPercent(precision, number)
 }
 
 // FormatCurrency returns the currency representation of number for the given currency and precision
 // for the current language.
 //
 // The return value is formatted with at least two decimal places.
-func (ns *Namespace) FormatCurrency(precision, currency, number interface{}) (string, error) {
-	p, n, err := ns.castPrecisionNumber(precision, number)
-	if err != nil {
-		return "", err
-	}
-	c := translators.GetCurrency(cast.ToString(currency))
-	if c < 0 {
-		return "", fmt.Errorf("unknown currency code: %q", currency)
-	}
-	return ns.translator.FmtCurrency(n, p, c), nil
+func (ns *Namespace) FormatCurrency(precision, currency, number any) (string, error) {
+	return ns.language.FormatCurrency(precision, currency, number)
 }
 
 // FormatAccounting returns the currency representation of number for the given currency and precision
 // for the current language in accounting notation.
 //
 // The return value is formatted with at least two decimal places.
-func (ns *Namespace) FormatAccounting(precision, currency, number interface{}) (string, error) {
-	p, n, err := ns.castPrecisionNumber(precision, number)
-	if err != nil {
-		return "", err
-	}
-	c := translators.GetCurrency(cast.ToString(currency))
-	if c < 0 {
-		return "", fmt.Errorf("unknown currency code: %q", currency)
-	}
-	return ns.translator.FmtAccounting(n, p, c), nil
+func (ns *Namespace) FormatAccounting(precision, currency, number any) (string, error) {
+	return ns.language.FormatAccounting(precision, currency, number)
 }
 
-func (ns *Namespace) castPrecisionNumber(precision, number interface{}) (uint64, float64, error) {
-	p, err := cast.ToUint64E(precision)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	// Sanity check.
-	if p > 20 {
-		return 0, 0, fmt.Errorf("invalid precision: %d", precision)
-	}
-
-	n, err := cast.ToFloat64E(number)
-	if err != nil {
-		return 0, 0, err
-	}
-	return p, n, nil
-}
-
-// FormatNumberCustom formats a number with the given precision using the
-// negative, decimal, and grouping options.  The `options`
-// parameter is a string consisting of `<negative> <decimal> <grouping>`.  The
-// default `options` value is `- . ,`.
+// FormatNumberCustom formats a number with the given precision. The first
+// options parameter is a space-delimited string of characters to represent
+// negativity, the decimal point, and grouping. The default value is `- . ,`.
+// The second options parameter defines an alternate delimiting character.
 //
 // Note that numbers are rounded up at 5 or greater.
 // So, with precision set to 0, 1.5 becomes `2`, and 1.4 becomes `1`.
 //
 // For a simpler function that adapts to the current language, see FormatNumber.
-func (ns *Namespace) FormatNumberCustom(precision, number interface{}, options ...interface{}) (string, error) {
+func (ns *Namespace) FormatNumberCustom(precision, number any, options ...any) (string, error) {
 	prec, err := cast.ToIntE(precision)
 	if err != nil {
 		return "", err
@@ -162,7 +105,7 @@ func (ns *Namespace) FormatNumberCustom(precision, number interface{}, options .
 			// custom delimiter
 			s, err := cast.ToStringE(options[1])
 			if err != nil {
-				return "", nil
+				return "", err
 			}
 
 			delim = s
@@ -170,7 +113,7 @@ func (ns *Namespace) FormatNumberCustom(precision, number interface{}, options .
 
 		s, err := cast.ToStringE(options[0])
 		if err != nil {
-			return "", nil
+			return "", err
 		}
 
 		rs := strings.Split(s, delim)
@@ -237,19 +180,18 @@ func (ns *Namespace) FormatNumberCustom(precision, number interface{}, options .
 	return string(b), nil
 }
 
-// NumFmt is deprecated, use FormatNumberCustom.
-// We renamed this in Hugo 0.87.
-// Deprecated: Use FormatNumberCustom
-func (ns *Namespace) NumFmt(precision, number interface{}, options ...interface{}) (string, error) {
-	return ns.FormatNumberCustom(precision, number, options...)
-}
-
 type pagesLanguageMerger interface {
-	MergeByLanguageInterface(other interface{}) (interface{}, error)
+	MergeByLanguageInterface(other any) (any, error)
 }
 
 // Merge creates a union of pages from two languages.
-func (ns *Namespace) Merge(p2, p1 interface{}) (interface{}, error) {
+func (ns *Namespace) Merge(p2, p1 any) (any, error) {
+	if !hreflect.IsTruthful(p1) {
+		return p2, nil
+	}
+	if !hreflect.IsTruthful(p2) {
+		return p1, nil
+	}
 	merger, ok := p1.(pagesLanguageMerger)
 	if !ok {
 		return nil, fmt.Errorf("language merge not supported for %T", p1)

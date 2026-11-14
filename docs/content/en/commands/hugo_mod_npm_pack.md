@@ -5,51 +5,52 @@ url: /commands/hugo_mod_npm_pack/
 ---
 ## hugo mod npm pack
 
-Experimental: Prepares and writes a composite package.json file for your project.
+Merges module Node.js dependencies into an npm workspace
 
 ### Synopsis
 
-Prepares and writes a composite package.json file for your project.
+Merges Node.js dependencies from all Hugo modules into a "packages/hugoautogen" npm workspace.
 
-On first run it creates a "package.hugo.json" in the project root if not already there. This file will be used as a template file
-with the base dependency set. 
+The merged dependencies are written to packages/hugoautogen/package.json, and the root package.json
+is updated with a "workspaces" entry pointing to "packages/hugoautogen".
 
-This set will be merged with all "package.hugo.json" files found in the dependency tree, picking the version closest to the project.
+The source entries are read from either package.hugo.json or package.json in the module root, with package.hugo.json taking precedence if both exist.
 
-This command is marked as 'Experimental'. We think it's a great idea, so it's not likely to be
-removed from Hugo, but we need to test this out in "real life" to get a feel of it,
-so this may/will change in future versions of Hugo.
+See [Node.js dependencies](/hugo-modules/nodejs-dependencies/) for more information.
 
 
 ```
-hugo mod npm pack [flags]
+hugo mod npm pack [flags] [args]
 ```
 
 ### Options
 
 ```
-  -h, --help   help for pack
+  -b, --baseURL string           hostname (and path) to the root, e.g. https://spf13.com/
+      --cacheDir string          filesystem path to cache directory
+  -c, --contentDir string        filesystem path to content directory
+  -h, --help                     help for pack
+      --renderSegments strings   named segments to render (configured in the segments config)
+  -t, --theme strings            themes to use (located in /themes/THEMENAME/)
 ```
 
 ### Options inherited from parent commands
 
 ```
-      --config string              config file (default is path/config.yaml|json|toml)
+      --clock string               set the clock used by Hugo, e.g. --clock 2021-11-06T22:30:00.00+09:00
+      --config string              config file (default is hugo.yaml|json|toml)
       --configDir string           config dir (default "config")
-      --debug                      debug output
+  -d, --destination string         filesystem path to write files to
   -e, --environment string         build environment
-      --ignoreVendor               ignores any _vendor directory
       --ignoreVendorPaths string   ignores any _vendor for module paths matching the given Glob pattern
-      --log                        enable Logging
-      --logFile string             log File path (if set, logging enabled automatically)
+      --logLevel string            log level (debug|info|warn|error)
+      --noBuildLock                don't create .hugo_build.lock file
       --quiet                      build in quiet mode
+  -M, --renderToMemory             render to memory (mostly useful when running the server)
   -s, --source string              filesystem path to read files relative from
       --themesDir string           filesystem path to themes directory
-  -v, --verbose                    verbose output
-      --verboseLog                 verbose logging
 ```
 
 ### SEE ALSO
 
-* [hugo mod npm](/commands/hugo_mod_npm/)	 - Various npm helpers.
-
+* [hugo mod npm](/commands/hugo_mod_npm/)	 - Various npm helpers

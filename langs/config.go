@@ -14,213 +14,250 @@
 package langs
 
 import (
+	"errors"
 	"fmt"
-	"path/filepath"
+	"iter"
+	"slices"
 	"sort"
-	"strings"
 
-	"github.com/gohugoio/hugo/common/maps"
-
-	"github.com/spf13/cast"
-
-	"github.com/pkg/errors"
-
+	"github.com/gohugoio/hugo/common/paths"
+	"github.com/gohugoio/hugo/common/predicate"
 	"github.com/gohugoio/hugo/config"
+	"github.com/mitchellh/mapstructure"
 )
 
-type LanguagesConfig struct {
-	Languages                      Languages
-	Multihost                      bool
-	DefaultContentLanguageInSubdir bool
+// LanguageConfig holds the configuration for a single language.
+// This is what is read from the config file.
+type LanguageConfig struct {
+	// Deprecated: Use Label instead.
+	LanguageName string `json:"-"`
+
+	// Deprecated: Use Locale instead.
+	LanguageCode string `json:"-"`
+
+	// The language title. When set, this will
+	// override site.Title for this language.
+	Title string
+
+	// Deprecated: Use Direction instead.
+	LanguageDirection string `json:"-"`
+
+	// The language weight. When set to a non-zero value, this will
+	// be the main sort criteria for the language.
+	Weight int
+
+	// Set to true to disable this language.
+	Disabled bool
+
+	// The language direction, e.g. "ltr" or "rtl".
+	Direction string
+
+	// The language name, e.g. "English".
+	Label string
+
+	// The locale, e.g. "en-US".
+	Locale string
 }
 
-func LoadLanguageSettings(cfg config.Provider, oldLangs Languages) (c LanguagesConfig, err error) {
-	defaultLang := strings.ToLower(cfg.GetString("defaultContentLanguage"))
-	if defaultLang == "" {
-		defaultLang = "en"
-		cfg.Set("defaultContentLanguage", defaultLang)
+type LanguageInternal struct {
+	// Name is the name of the role, extracted from the key in the config.
+	Name string
+
+	// Whether this role is the default role.
+	// This will be rendered in the root.
+	// There is only be one default role.
+	Default bool
+
+	LanguageConfig
+}
+
+type LanguagesInternal struct {
+	LanguageConfigs map[string]LanguageConfig
+	Sorted          []LanguageInternal
+}
+
+func (ls LanguagesInternal) IndexDefault() int {
+	for i, role := range ls.Sorted {
+		if role.Default {
+			return i
+		}
 	}
+	panic("no default role found")
+}
 
-	var languages map[string]interface{}
+func (ls LanguagesInternal) ResolveName(i int) string {
+	if i < 0 || i >= len(ls.Sorted) {
+		panic(fmt.Sprintf("index %d out of range for languages", i))
+	}
+	return ls.Sorted[i].Name
+}
 
-	languagesFromConfig := cfg.GetParams("languages")
-	disableLanguages := cfg.GetStringSlice("disableLanguages")
+func (ls LanguagesInternal) ResolveIndex(name string) int {
+	for i, role := range ls.Sorted {
+		if role.Name == name {
+			return i
+		}
+	}
+	return -1
+}
 
-	if len(disableLanguages) == 0 {
-		languages = languagesFromConfig
-	} else {
-		languages = make(maps.Params)
-		for k, v := range languagesFromConfig {
-			for _, disabled := range disableLanguages {
-				if disabled == defaultLang {
-					return c, fmt.Errorf("cannot disable default language %q", defaultLang)
+func (ls LanguagesInternal) Len() int {
+	return len(ls.Sorted)
+}
+
+// IndexMatch returns an iterator for the roles that match the filter.
+func (ls LanguagesInternal) IndexMatch(match predicate.P[predicate.IndexString]) (iter.Seq[int], error) {
+	return func(yield func(i int) bool) {
+		for i, l := range ls.Sorted {
+			if match(predicate.IndexString{Index: i, String: l.Name}) {
+				if !yield(i) {
+					return
 				}
-
-				if strings.EqualFold(k, disabled) {
-					v.(maps.Params)["disabled"] = true
-					break
-				}
-			}
-			languages[k] = v
-		}
-	}
-
-	var languages2 Languages
-
-	if len(languages) == 0 {
-		languages2 = append(languages2, NewDefaultLanguage(cfg))
-	} else {
-		languages2, err = toSortedLanguages(cfg, languages)
-		if err != nil {
-			return c, errors.Wrap(err, "Failed to parse multilingual config")
-		}
-	}
-
-	if oldLangs != nil {
-		// When in multihost mode, the languages are mapped to a server, so
-		// some structural language changes will need a restart of the dev server.
-		// The validation below isn't complete, but should cover the most
-		// important cases.
-		var invalid bool
-		if languages2.IsMultihost() != oldLangs.IsMultihost() {
-			invalid = true
-		} else {
-			if languages2.IsMultihost() && len(languages2) != len(oldLangs) {
-				invalid = true
 			}
 		}
+	}, nil
+}
 
-		if invalid {
-			return c, errors.New("language change needing a server restart detected")
-		}
-
-		if languages2.IsMultihost() {
-			// We need to transfer any server baseURL to the new language
-			for i, ol := range oldLangs {
-				nl := languages2[i]
-				nl.Set("baseURL", ol.GetString("baseURL"))
+// ForEachIndex returns an iterator for the indices of the languages.
+func (ls LanguagesInternal) ForEachIndex() iter.Seq[int] {
+	return func(yield func(i int) bool) {
+		for i := range ls.Sorted {
+			if !yield(i) {
+				return
 			}
 		}
 	}
+}
 
-	// The defaultContentLanguage is something the user has to decide, but it needs
-	// to match a language in the language definition list.
-	langExists := false
-	for _, lang := range languages2 {
-		if lang.Lang == defaultLang {
-			langExists = true
+func (ls *LanguagesInternal) init(defaultContentLanguage, rootLocale, rootLanguageCode string, disabledLanguages []string) (string, error) {
+	const en = "en"
+
+	if len(ls.LanguageConfigs) == 0 {
+		// Add a default language.
+		if defaultContentLanguage == "" {
+			defaultContentLanguage = en
+		}
+		ls.LanguageConfigs[defaultContentLanguage] = LanguageConfig{}
+	}
+
+	var (
+		defaultSeen bool
+		enIdx       int = -1
+	)
+	for k, v := range ls.LanguageConfigs {
+		if !v.Disabled && slices.Contains(disabledLanguages, k) {
+			// This language is disabled.
+			v.Disabled = true
+			ls.LanguageConfigs[k] = v
+		}
+
+		if k == "" {
+			return "", errors.New("language name cannot be empty")
+		}
+
+		if err := paths.ValidateIdentifier(k); err != nil {
+			return "", fmt.Errorf("language name %q is invalid: %s", k, err)
+		}
+
+		var isDefault bool
+		if k == defaultContentLanguage {
+			isDefault = true
+			defaultSeen = true
+		}
+
+		if isDefault && v.Disabled {
+			return "", fmt.Errorf("default language %q is disabled", k)
+		}
+
+		if !v.Disabled {
+			ls.Sorted = append(ls.Sorted, LanguageInternal{Name: k, Default: isDefault, LanguageConfig: v})
+		}
+	}
+
+	// Sort by weight if set, then by name.
+	sort.SliceStable(ls.Sorted, func(i, j int) bool {
+		ri, rj := ls.Sorted[i], ls.Sorted[j]
+		if ri.Weight == rj.Weight {
+			return ri.Name < rj.Name
+		}
+		if rj.Weight == 0 {
+			return true
+		}
+		if ri.Weight == 0 {
+			return false
+		}
+		return ri.Weight < rj.Weight
+	})
+
+	for i, l := range ls.Sorted {
+		if l.Name == en {
+			enIdx = i
 			break
 		}
 	}
 
-	if !langExists {
-		return c, fmt.Errorf("site config value %q for defaultContentLanguage does not match any language definition", defaultLang)
-	}
-
-	c.Languages = languages2
-	c.Multihost = languages2.IsMultihost()
-	c.DefaultContentLanguageInSubdir = c.Multihost
-
-	sortedDefaultFirst := make(Languages, len(c.Languages))
-	for i, v := range c.Languages {
-		sortedDefaultFirst[i] = v
-	}
-	sort.Slice(sortedDefaultFirst, func(i, j int) bool {
-		li, lj := sortedDefaultFirst[i], sortedDefaultFirst[j]
-		if li.Lang == defaultLang {
-			return true
+	if !defaultSeen {
+		if defaultContentLanguage != "" {
+			// Set by the user, but not found in the config.
+			return "", fmt.Errorf("defaultContentLanguage %q not found in languages configuration", defaultContentLanguage)
 		}
-
-		if lj.Lang == defaultLang {
-			return false
+		// Not set by the user, so we use the first language in the config.
+		defaultIdx := 0
+		if enIdx != -1 {
+			defaultIdx = enIdx
 		}
-
-		return i < j
-	})
-
-	cfg.Set("languagesSorted", c.Languages)
-	cfg.Set("languagesSortedDefaultFirst", sortedDefaultFirst)
-	cfg.Set("multilingual", len(languages2) > 1)
-
-	multihost := c.Multihost
-
-	if multihost {
-		cfg.Set("defaultContentLanguageInSubdir", true)
-		cfg.Set("multihost", true)
+		d := ls.Sorted[defaultIdx]
+		d.Default = true
+		ls.LanguageConfigs[d.Name] = d.LanguageConfig
+		ls.Sorted[defaultIdx] = d
+		defaultContentLanguage = d.Name
 	}
 
-	if multihost {
-		// The baseURL may be provided at the language level. If that is true,
-		// then every language must have a baseURL. In this case we always render
-		// to a language sub folder, which is then stripped from all the Permalink URLs etc.
-		for _, l := range languages2 {
-			burl := l.GetLocal("baseURL")
-			if burl == nil {
-				return c, errors.New("baseURL must be set on all or none of the languages")
+	// Apply root-level locale to the default content language if it has none.
+	// Done after defaultContentLanguage is resolved and Sorted is built so both
+	// are updated consistently. Other languages fall back to their Lang key.
+	// Priority: per-lang locale > root locale > per-lang languageCode > root
+	// languageCode. Root languageCode only applies when the default language has
+	// neither a per-lang locale nor a per-lang languageCode.
+	applyRootLocale := func(locale string) {
+		if v, ok := ls.LanguageConfigs[defaultContentLanguage]; ok {
+			v.Locale = locale
+			ls.LanguageConfigs[defaultContentLanguage] = v
+			for i, s := range ls.Sorted {
+				if s.Name == defaultContentLanguage {
+					ls.Sorted[i].LanguageConfig.Locale = locale
+					break
+				}
 			}
 		}
 	}
-
-	for _, language := range c.Languages {
-		if language.initErr != nil {
-			return c, language.initErr
+	if rootLocale != "" {
+		if v, ok := ls.LanguageConfigs[defaultContentLanguage]; ok && v.Locale == "" {
+			applyRootLocale(rootLocale)
+		}
+	} else if rootLanguageCode != "" {
+		if v, ok := ls.LanguageConfigs[defaultContentLanguage]; ok && v.Locale == "" && v.LanguageCode == "" {
+			applyRootLocale(rootLanguageCode)
 		}
 	}
 
-	return c, nil
+	return defaultContentLanguage, nil
 }
 
-func toSortedLanguages(cfg config.Provider, l map[string]interface{}) (Languages, error) {
-	languages := make(Languages, len(l))
-	i := 0
-
-	for lang, langConf := range l {
-		langsMap, err := maps.ToStringMapE(langConf)
-		if err != nil {
-			return nil, fmt.Errorf("Language config is not a map: %T", langConf)
+func DecodeConfig(defaultContentLanguage, rootLocale, rootLanguageCode string, disabledLanguages []string, m map[string]any) (*config.ConfigNamespace[map[string]LanguageConfig, LanguagesInternal], string, error) {
+	v, err := config.DecodeNamespace[map[string]LanguageConfig](m, func(in any) (LanguagesInternal, any, error) {
+		var languages LanguagesInternal
+		var conf map[string]LanguageConfig
+		if err := mapstructure.Decode(m, &conf); err != nil {
+			return languages, nil, err
 		}
-
-		language := NewLanguage(lang, cfg)
-
-		for loki, v := range langsMap {
-			switch loki {
-			case "title":
-				language.Title = cast.ToString(v)
-			case "languagename":
-				language.LanguageName = cast.ToString(v)
-			case "languagedirection":
-				language.LanguageDirection = cast.ToString(v)
-			case "weight":
-				language.Weight = cast.ToInt(v)
-			case "contentdir":
-				language.ContentDir = filepath.Clean(cast.ToString(v))
-			case "disabled":
-				language.Disabled = cast.ToBool(v)
-			case "params":
-				m := maps.ToStringMap(v)
-				// Needed for case insensitive fetching of params values
-				maps.PrepareParams(m)
-				for k, vv := range m {
-					language.SetParam(k, vv)
-				}
-			case "timezone":
-				if err := language.loadLocation(cast.ToString(v)); err != nil {
-					return nil, err
-				}
-			}
-
-			// Put all into the Params map
-			language.SetParam(loki, v)
-
-			// Also set it in the configuration map (for baseURL etc.)
-			language.Set(loki, v)
+		languages.LanguageConfigs = conf
+		var err error
+		if defaultContentLanguage, err = languages.init(defaultContentLanguage, rootLocale, rootLanguageCode, disabledLanguages); err != nil {
+			return languages, nil, err
 		}
+		return languages, languages.LanguageConfigs, nil
+	})
 
-		languages[i] = language
-		i++
-	}
-
-	sort.Sort(languages)
-
-	return languages, nil
+	return v, defaultContentLanguage, err
 }

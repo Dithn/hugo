@@ -17,6 +17,9 @@ package highlight
 import (
 	"testing"
 
+	"github.com/alecthomas/chroma/v2"
+	"github.com/alecthomas/chroma/v2/styles"
+
 	qt "github.com/frankban/quicktest"
 )
 
@@ -43,7 +46,7 @@ User-Agent: foo
 		h := New(cfg)
 
 		result, _ := h.Highlight(`echo "Hugo Rocks!"`, "bash", "")
-		c.Assert(result, qt.Equals, `<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="nb">echo</span> <span class="s2">&#34;Hugo Rocks!&#34;</span></code></pre></div>`)
+		c.Assert(result, qt.Equals, `<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;Hugo Rocks!&#34;</span></span></span></code></pre></div>`)
 		result, _ = h.Highlight(`echo "Hugo Rocks!"`, "unknown", "")
 		c.Assert(result, qt.Equals, `<pre tabindex="0"><code class="language-unknown" data-lang="unknown">echo &#34;Hugo Rocks!&#34;</code></pre>`)
 	})
@@ -58,7 +61,7 @@ User-Agent: foo
 		c.Assert(result, qt.Contains, "<span class=\"hl\"><span class=\"lnt\">4")
 
 		result, _ = h.Highlight(lines, "bash", "linenos=inline,hl_lines=2")
-		c.Assert(result, qt.Contains, "<span class=\"ln\">2</span>LINE2\n</span>")
+		c.Assert(result, qt.Contains, "<span class=\"ln\">2</span><span class=\"cl\">LINE2\n</span></span>")
 		c.Assert(result, qt.Not(qt.Contains), "<table")
 
 		result, _ = h.Highlight(lines, "bash", "linenos=true,hl_lines=2")
@@ -86,9 +89,7 @@ User-Agent: foo
 		h := New(cfg)
 
 		result, _ := h.Highlight(lines, "bash", "")
-		// From Chroma v0.8.2 this is linkable: https://github.com/alecthomas/chroma/commit/ab61726cdb54d5a98b6efe7ed76af6aa0698ab4a
-		c.Assert(result, qt.Contains, "<span class=\"lnt\" id=\"2\"><a style=\"outline: none; text-decoration:none; color:inherit\" href=\"#2\">2</a>\n</span>")
-		result, _ = h.Highlight(lines, "bash", "lineanchors=test")
+		c.Assert(result, qt.Contains, "<span class=\"lnt\" id=\"2\"><a class=\"lnlinks\" href=\"#2\">2</a>\n</span>")
 		result, _ = h.Highlight(lines, "bash", "anchorlinenos=false,hl_lines=2")
 		c.Assert(result, qt.Not(qt.Contains), "id=\"2\"")
 	})
@@ -101,7 +102,7 @@ User-Agent: foo
 		h := New(cfg)
 
 		result, _ := h.Highlight(lines, "bash", "")
-		c.Assert(result, qt.Contains, "<span class=\"ln\">2</span>LINE2\n<")
+		c.Assert(result, qt.Contains, "<span class=\"cl\">LINE2\n</span></span>")
 		result, _ = h.Highlight(lines, "bash", "linenos=table")
 		c.Assert(result, qt.Contains, "<span class=\"lnt\">1\n</span>")
 	})
@@ -125,7 +126,7 @@ User-Agent: foo
 		h := New(cfg)
 
 		result, _ := h.Highlight(lines, "", "")
-		c.Assert(result, qt.Contains, "<span class=\"ln\">2</span>LINE2\n<")
+		c.Assert(result, qt.Contains, "<span class=\"cl\">LINE2\n</span></span>")
 	})
 
 	c.Run("No language, Escape HTML string", func(c *qt.C) {
@@ -146,4 +147,13 @@ User-Agent: foo
 		c.Assert(result, qt.Contains, "hello")
 		c.Assert(result, qt.Contains, "}")
 	})
+}
+
+func TestGitHubDarkStyleIncludesNameOther(t *testing.T) {
+	c := qt.New(t)
+
+	style := styles.Get("github-dark")
+	c.Assert(style, qt.Not(qt.IsNil))
+	c.Assert(style.Has(chroma.NameOther), qt.Equals, true)
+	c.Assert(style.Get(chroma.NameOther).Colour.String(), qt.Equals, "#e6edf3")
 }

@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/gohugoio/hugo/common/herrors"
+	"github.com/gohugoio/hugo/common/loggers"
 	"github.com/gohugoio/hugo/common/types"
 
 	qt "github.com/frankban/quicktest"
@@ -27,19 +28,19 @@ func TestBuild(t *testing.T) {
 	c := qt.New(t)
 
 	v := New()
-	v.Set("build", map[string]interface{}{
+	v.Set("build", map[string]any{
 		"useResourceCacheWhen": "always",
 	})
 
-	b := DecodeBuild(v)
+	b := DecodeBuildConfig(v)
 
 	c.Assert(b.UseResourceCacheWhen, qt.Equals, "always")
 
-	v.Set("build", map[string]interface{}{
+	v.Set("build", map[string]any{
 		"useResourceCacheWhen": "foo",
 	})
 
-	b = DecodeBuild(v)
+	b = DecodeBuildConfig(v)
 
 	c.Assert(b.UseResourceCacheWhen, qt.Equals, "fallback")
 
@@ -70,17 +71,33 @@ X-Content-Type-Options = "nosniff"
 
 [[server.redirects]]
 from = "/foo/**"
-to = "/foo/index.html"
+to = "/baz/index.html"
+status = 200
+
+[[server.redirects]]
+from = "/loop/**"
+to = "/loop/foo/"
+status = 200
+
+[[server.redirects]]
+from = "/b/**"
+fromRe = "/b/(.*)/"
+to = "/baz/$1/"
+status = 200
+
+[[server.redirects]]
+fromRe = "/c/(.*)/"
+to = "/boo/$1/"
+status = 200
+
+[[server.redirects]]
+fromRe = "/d/(.*)/"
+to = "/boo/$1/"
 status = 200
 
 [[server.redirects]]
 from = "/google/**"
 to = "https://google.com/"
-status = 301
-
-[[server.redirects]]
-from = "/**"
-to = "/default/index.html"
 status = 301
 
 
@@ -91,6 +108,7 @@ status = 301
 
 	s, err := DecodeServer(cfg)
 	c.Assert(err, qt.IsNil)
+	c.Assert(s.CompileConfig(loggers.NewDefault()), qt.IsNil)
 
 	c.Assert(s.MatchHeaders("/foo.jpg"), qt.DeepEquals, []types.KeyValueStr{
 		{Key: "X-Content-Type-Options", Value: "nosniff"},
@@ -98,43 +116,82 @@ status = 301
 		{Key: "X-XSS-Protection", Value: "1; mode=block"},
 	})
 
-	c.Assert(s.MatchRedirect("/foo/bar/baz"), qt.DeepEquals, Redirect{
+	c.Assert(s.MatchRedirect("/foo/bar/baz", nil), qt.DeepEquals, Redirect{
 		From:   "/foo/**",
-		To:     "/foo/",
+		To:     "/baz/",
 		Status: 200,
 	})
 
-	c.Assert(s.MatchRedirect("/someother"), qt.DeepEquals, Redirect{
-		From:   "/**",
-		To:     "/default/",
-		Status: 301,
+	c.Assert(s.MatchRedirect("/foo/bar/", nil), qt.DeepEquals, Redirect{
+		From:   "/foo/**",
+		To:     "/baz/",
+		Status: 200,
 	})
 
-	c.Assert(s.MatchRedirect("/google/foo"), qt.DeepEquals, Redirect{
+	c.Assert(s.MatchRedirect("/b/c/", nil), qt.DeepEquals, Redirect{
+		From:   "/b/**",
+		FromRe: "/b/(.*)/",
+		To:     "/baz/c/",
+		Status: 200,
+	})
+
+	c.Assert(s.MatchRedirect("/c/d/", nil).To, qt.Equals, "/boo/d/")
+	c.Assert(s.MatchRedirect("/c/d/e/", nil).To, qt.Equals, "/boo/d/e/")
+
+	c.Assert(s.MatchRedirect("/someother", nil), qt.DeepEquals, Redirect{})
+
+	c.Assert(s.MatchRedirect("/google/foo", nil), qt.DeepEquals, Redirect{
 		From:   "/google/**",
 		To:     "https://google.com/",
 		Status: 301,
 	})
+}
 
-	// No redirect loop, please.
-	c.Assert(s.MatchRedirect("/default/index.html"), qt.DeepEquals, Redirect{})
-	c.Assert(s.MatchRedirect("/default/"), qt.DeepEquals, Redirect{})
+func TestBuildConfigCacheBusters(t *testing.T) {
+	c := qt.New(t)
+	cfg := New()
+	conf := DecodeBuildConfig(cfg)
+	l := loggers.NewDefault()
+	c.Assert(conf.CompileConfig(l), qt.IsNil)
 
-	for _, errorCase := range []string{
-		`[[server.redirects]]
-from = "/**"
-to = "/file"
-status = 301`,
-		`[[server.redirects]]
-from = "/**"
-to = "/foo/file.html"
-status = 301`,
-	} {
+	m, _ := conf.MatchCacheBuster(l, "tailwind.config.js")
+	c.Assert(m, qt.IsNotNil)
+	c.Assert(m("css"), qt.IsTrue)
+	c.Assert(m("js"), qt.IsFalse)
 
-		cfg, err := FromConfigString(errorCase, "toml")
-		c.Assert(err, qt.IsNil)
-		_, err = DecodeServer(cfg)
-		c.Assert(err, qt.Not(qt.IsNil))
+	m, _ = conf.MatchCacheBuster(l, "foo.bar")
+	c.Assert(m, qt.IsNil)
+}
 
-	}
+func TestBuildConfigCacheBusterstTailwindSetup(t *testing.T) {
+	c := qt.New(t)
+	cfg := New()
+	cfg.Set("build", map[string]any{
+		"cacheBusters": []map[string]string{
+			{
+				"source": "assets/watching/hugo_stats\\.json",
+				"target": "css",
+			},
+			{
+				"source": "(postcss|tailwind)\\.config\\.js",
+				"target": "css",
+			},
+			{
+				"source": "assets/.*\\.(js|ts|jsx|tsx)",
+				"target": "js",
+			},
+			{
+				"source": "assets/.*\\.(.*)$",
+				"target": "$1",
+			},
+		},
+	})
+
+	conf := DecodeBuildConfig(cfg)
+	l := loggers.NewDefault()
+	c.Assert(conf.CompileConfig(l), qt.IsNil)
+
+	m, err := conf.MatchCacheBuster(l, "assets/watching/hugo_stats.json")
+	c.Assert(err, qt.IsNil)
+	c.Assert(m("css"), qt.IsTrue)
 }

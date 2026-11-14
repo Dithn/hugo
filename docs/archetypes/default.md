@@ -1,12 +1,6 @@
 ---
-linktitle: ""
-description: ""
-publishdate: ""
-lastmod: ""
+title: {{ replace .File.ContentBaseName "-" " " | strings.FirstUpper }}
+description:
 categories: []
-tags: []
-weight: 00
-slug: ""
-aliases: []
-toc: false
+keywords: []
 ---

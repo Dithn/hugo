@@ -1,133 +1,99 @@
 ---
 title: Menus
-linktitle: Menus
-description: Hugo has a simple yet powerful menu system.
-date: 2017-02-01
-publishdate: 2017-02-01
-lastmod: 2017-03-31
-categories: [content management]
-keywords: [menus]
-draft: false
-menu:
-  docs:
-    parent: "content-management"
-    weight: 120
-weight: 120
-aliases: [/extras/menus/]
-toc: true
+description: Create menus by defining entries, localizing each entry, and rendering the resulting data structure.
+categories: []
+keywords: []
 ---
 
-{{% note "Lazy Blogger"%}}
-If all you want is a simple menu for your sections, see the ["Section Menu for Lazy Bloggers" in Menu Templates](/templates/menu-templates/#section-menu-for-lazy-bloggers).
-{{% /note %}}
+## Overview
 
-You can do this:
+To create a menu for your site:
 
-* Place content in one or many menus
-* Handle nested menus with unlimited depth
-* Create menu entries without being attached to any content
-* Distinguish active element (and active branch)
+1. Define the menu entries
+1. [Localize](multilingual/#menus) each entry
+1. Render the menu with a [template][]
 
-## What is a Menu in Hugo?
+Create multiple menus, either flat or nested. For example, create a main menu for the header, and a separate menu for the footer.
 
-A **menu** is a named array of menu entries accessible by name via the [`.Site.Menus` site variable][sitevars]. For example, you can access your site's `main` menu via `.Site.Menus.main`.
+There are three ways to define menu entries:
 
-{{% note "Menus on Multilingual Sites" %}}
-If you make use of the [multilingual feature](/content-management/multilingual/), you can define language-independent menus.
-{{% /note %}}
+1. Automatically
+1. In front matter
+1. In your project configuration
 
-See the [Menu Entry Properties][me-props] for all the variables and functions related to a menu entry.
+> [!NOTE]
+> Although you can use these methods in combination when defining a menu, the menu will be easier to conceptualize and maintain if you use one method throughout the site.
 
-## Add content to menus
+## Define automatically
 
-Hugo allows you to add content to a menu via the content's [front matter](/content-management/front-matter/).
+To automatically define a menu entry for each top-level [section](g) of your site, enable the section pages menu in your project configuration.
 
-### Simple
-
-If all you need to do is add an entry to a menu, the simple form works well.
-
-#### A Single Menu
-
-{{< code-toggle >}}
-menu: "main"
+{{< code-toggle file=hugo >}}
+sectionPagesMenu = 'main'
 {{< /code-toggle >}}
 
-#### Multiple Menus
+This creates a menu structure that you can access with `site.Menus.main` in your templates. See [menu templates][] for details.
 
-{{< code-toggle >}}
-menu: ["main", "footer"]
+## Define in front matter
+
+To add a page to the "main" menu:
+
+{{< code-toggle file=content/about.md fm=true >}}
+title = 'About'
+menus = 'main'
 {{< /code-toggle >}}
 
-#### Advanced
+Access the entry with `site.Menus.main` in your templates. See [menu templates][] for details.
 
-{{< code-toggle >}}
-menu:
-  docs:
-    parent: 'extras'
-    weight: 20
+To add a page to the "main" and "footer" menus:
+
+{{< code-toggle file=content/contact.md fm=true >}}
+title = 'Contact'
+menus = ['main','footer']
 {{< /code-toggle >}}
 
-## Add Non-content Entries to a Menu
+Access the entry with `site.Menus.main` and `site.Menus.footer` in your templates. See [menu templates][] for details.
 
-You can also add entries to menus that aren’t attached to a piece of content. This takes place in your Hugo project's [`config` file][config].
+> [!NOTE]
+> The configuration key in the examples above is `menus`. The `menu` (singular) configuration key is an alias for `menus`.
 
-Here’s an example snippet pulled from a configuration file:
+### Properties
 
-{{< code-toggle file="config" >}}
-[[menu.main]]
-    name = "about hugo"
-    pre = "<i class='fa fa-heart'></i>"
-    weight = -110
-    identifier = "about"
-    url = "/about/"
-[[menu.main]]
-    name = "getting started"
-    pre = "<i class='fa fa-road'></i>"
-    post = "<span class='alert'>New!</span>"
-    weight = -100
-    url = "/getting-started/"
+Use these properties when defining menu entries in front matter:
+
+{{% include "/_common/menu-entry-properties.md" %}}
+
+### Example
+
+This front matter menu entry demonstrates some of the available properties:
+
+<!-- markdownlint-disable MD033 -->
+{{< code-toggle file=content/products/software.md fm=true >}}
+title = 'Software'
+[menus.main]
+parent = 'Products'
+weight = 20
+pre = '<i class="fa-solid fa-code"></i>'
+[menus.main.params]
+class = 'center'
 {{< /code-toggle >}}
+<!-- markdownlint-enable MD033 -->
 
-{{% note %}}
-The URLs must be relative to the context root. If the `baseURL` is `https://example.com/mysite/`, then the URLs in the menu must not include the context root `mysite`. Using an absolute URL will override the baseURL. If the value used for `URL` in the above example is `https://subdomain.example.com/`, the output will be `https://subdomain.example.com`.
-{{% /note %}}
+Access the entry with `site.Menus.main` in your templates. See [menu templates][] for details.
 
-## Nesting
+## Define in project configuration
 
-All nesting of content is done via the `parent` field.
+See [configure menus][].
 
-The parent of an entry should be the identifier of another entry. The identifier should be unique (within a menu).
+## Localize
 
-The following order is used to determine an Identifier:
+Hugo provides two methods to localize your menu entries. See [multilingual][].
 
-`.Name > .LinkTitle > .Title`
+## Render
 
-This means that `.Title` will be used unless `.LinkTitle` is present, etc. In practice, `.Name` and `.Identifier` are only used to structure relationships and therefore never displayed.
+See [menu templates][].
 
-In this example, the top level of the menu is defined in your [site `config` file][config]. All content entries are attached to one of these entries via the `.Parent` field.
-
-## Params
-
-You can also add user-defined content to menu items via the `params` field.
-
-A common use case is to define a custom param to add a css class to a specific menu item.
-
-{{< code-toggle file="config" >}}
-[[menu.main]]
-    name = "about hugo"
-    pre = "<i class='fa fa-heart'></i>"
-    weight = -110
-    identifier = "about"
-    url = "/about/"
-    [menu.main.params]
-      class = "highlight-menu-item"
-{{</ code-toggle >}}
-
-## Render Menus
-
-See [Menu Templates](/templates/menu-templates/) for information on how to render your site menus within your templates.
-
-[config]: /getting-started/configuration/
-[multilingual]: /content-management/multilingual/
-[sitevars]: /variables/
-[me-props]: /variables/menus/
+[configure menus]: /configuration/menus/
+[menu templates]: /templates/menu/
+[multilingual]: /content-management/multilingual/#menus
+[template]: /templates/menu/

@@ -1,5 +1,3 @@
-// Package filenotify is adapted from https://github.com/moby/moby/tree/master/pkg/filenotify, Apache-2.0 License.
-// Hopefully this can be replaced with an external package sometime in the future, see https://github.com/fsnotify/fsnotify/issues/9
 package filenotify
 
 import (
@@ -11,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/gohugoio/hugo/common/herrors"
 )
 
 var (
@@ -191,7 +190,7 @@ func (r *recording) record(filename string) error {
 	r.clear()
 
 	fi, err := os.Stat(filename)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !herrors.IsNotExist(err) {
 		return err
 	}
 
@@ -202,11 +201,11 @@ func (r *recording) record(filename string) error {
 	r.FileInfo = fi
 
 	// If fi is a dir, we watch the files inside that directory (not recursively).
-	// This matches the behaviour of fsnotity.
+	// This matches the behavior of fsnotity.
 	if fi.IsDir() {
 		f, err := os.Open(filename)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if herrors.IsNotExist(err) {
 				return nil
 			}
 			return err
@@ -215,7 +214,7 @@ func (r *recording) record(filename string) error {
 
 		fis, err := f.Readdir(-1)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if herrors.IsNotExist(err) {
 				return nil
 			}
 			return err
@@ -249,7 +248,6 @@ func newItemToWatch(filename string) (*itemToWatch, error) {
 	}
 
 	return &itemToWatch{filename: filename, left: r}, nil
-
 }
 
 func (item *itemToWatch) checkForChanges() ([]fsnotify.Event, error) {
@@ -260,14 +258,14 @@ func (item *itemToWatch) checkForChanges() ([]fsnotify.Event, error) {
 	}
 
 	err := item.right.record(item.filename)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !herrors.IsNotExist(err) {
 		return nil, err
 	}
 
 	dirOp := checkChange(item.left.FileInfo, item.right.FileInfo)
 
 	if dirOp != 0 {
-		evs := []fsnotify.Event{fsnotify.Event{Op: dirOp, Name: item.filename}}
+		evs := []fsnotify.Event{{Op: dirOp, Name: item.filename}}
 		return evs, nil
 	}
 
@@ -299,7 +297,6 @@ func (item *itemToWatch) checkForChanges() ([]fsnotify.Event, error) {
 	}
 
 	return evs, nil
-
 }
 
 func checkChange(fi1, fi2 os.FileInfo) fsnotify.Op {

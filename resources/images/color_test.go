@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	qt "github.com/frankban/quicktest"
+	"github.com/gohugoio/hugo/htesting/hqt"
 )
 
 func TestHexStringToColor(t *testing.T) {
@@ -25,7 +26,7 @@ func TestHexStringToColor(t *testing.T) {
 
 	for _, test := range []struct {
 		arg    string
-		expect interface{}
+		expect any
 	}{
 		{"f", false},
 		{"#f", false},
@@ -38,15 +39,18 @@ func TestHexStringToColor(t *testing.T) {
 		{"#ffffff", color.White},
 		{"ffffff", color.White},
 		{"#000", color.Black},
-		{"#4287f5", color.RGBA{R: 0x42, G: 0x87, B: 0xf5, A: 0xff}},
-		{"777", color.RGBA{R: 0x77, G: 0x77, B: 0x77, A: 0xff}},
+		{"#4287f5", color.NRGBA{R: 0x42, G: 0x87, B: 0xf5, A: 0xff}},
+		{"777", color.NRGBA{R: 0x77, G: 0x77, B: 0x77, A: 0xff}},
+		// Hex notation is not alpha-premultiplied, so a transparent color
+		// must parse to a color.NRGBA. See issue 12536.
+		{"#00f7", color.NRGBA{R: 0x00, G: 0x00, B: 0xff, A: 0x77}},
+		{"4287f580", color.NRGBA{R: 0x42, G: 0x87, B: 0xf5, A: 0x80}},
 	} {
 
-		test := test
 		c.Run(test.arg, func(c *qt.C) {
 			c.Parallel()
 
-			result, err := hexStringToColor(test.arg)
+			result, err := hexStringToColorGo(test.arg)
 
 			if b, ok := test.expect.(bool); ok && !b {
 				c.Assert(err, qt.Not(qt.IsNil))
@@ -60,6 +64,35 @@ func TestHexStringToColor(t *testing.T) {
 	}
 }
 
+func TestColorToHexString(t *testing.T) {
+	c := qt.New(t)
+
+	for _, test := range []struct {
+		arg    color.Color
+		expect string
+	}{
+		{color.White, "#ffffff"},
+		{color.Black, "#000000"},
+		{color.RGBA{R: 0x42, G: 0x87, B: 0xf5, A: 0xff}, "#4287f5"},
+
+		// 50% opacity. Hex notation is not alpha-premultiplied, so the
+		// components of a transparent color are the non-premultiplied ones.
+		// Note that the .Colors (dominant colors) received from the Image resource
+		// will always have an alpha value of 0xff.
+		{color.NRGBA{R: 0x42, G: 0x87, B: 0xf5, A: 0x80}, "#4287f580"},
+	} {
+
+		c.Run(test.expect, func(c *qt.C) {
+			c.Parallel()
+
+			result := ColorGoToHexString(test.arg)
+
+			c.Assert(result, qt.Equals, test.expect)
+		})
+
+	}
+}
+
 func TestAddColorToPalette(t *testing.T) {
 	c := qt.New(t)
 
@@ -67,9 +100,9 @@ func TestAddColorToPalette(t *testing.T) {
 
 	c.Assert(AddColorToPalette(color.White, palette), qt.HasLen, 2)
 
-	blue1, _ := hexStringToColor("34c3eb")
-	blue2, _ := hexStringToColor("34c3eb")
-	white, _ := hexStringToColor("fff")
+	blue1, _ := hexStringToColorGo("34c3eb")
+	blue2, _ := hexStringToColorGo("34c3eb")
+	white, _ := hexStringToColorGo("fff")
 
 	c.Assert(AddColorToPalette(white, palette), qt.HasLen, 2)
 	c.Assert(AddColorToPalette(blue1, palette), qt.HasLen, 3)
@@ -80,10 +113,18 @@ func TestReplaceColorInPalette(t *testing.T) {
 	c := qt.New(t)
 
 	palette := color.Palette{color.White, color.Black}
-	offWhite, _ := hexStringToColor("fcfcfc")
+	offWhite, _ := hexStringToColorGo("fcfcfc")
 
 	ReplaceColorInPalette(offWhite, palette)
 
 	c.Assert(palette, qt.HasLen, 2)
 	c.Assert(palette[0], qt.Equals, offWhite)
+}
+
+func TestColorLuminance(t *testing.T) {
+	c := qt.New(t)
+	c.Assert(hexStringToColor("#000000").Luminance(), hqt.IsSameFloat64, 0.0)
+	c.Assert(hexStringToColor("#768a9a").Luminance(), hqt.IsSameFloat64, 0.24361603589088263)
+	c.Assert(hexStringToColor("#d5bc9f").Luminance(), hqt.IsSameFloat64, 0.5261577672685374)
+	c.Assert(hexStringToColor("#ffffff").Luminance(), hqt.IsSameFloat64, 1.0)
 }

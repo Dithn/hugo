@@ -16,18 +16,37 @@
 package create
 
 import (
+	"context"
+	"errors"
+	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/gohugoio/hugo/hugofs/glob"
+	"golang.org/x/net/http/httpproxy"
+
+	"github.com/bep/helpers/contexthelpers"
+
+	"github.com/bep/logg"
+	"github.com/gohugoio/httpcache"
+	hhttpcache "github.com/gohugoio/hugo/cache/httpcache"
+	"github.com/gohugoio/hugo/hugofs/hglob"
+	"github.com/gohugoio/hugo/identity"
 
 	"github.com/gohugoio/hugo/hugofs"
 
+	"github.com/gohugoio/hugo/cache/dynacache"
 	"github.com/gohugoio/hugo/cache/filecache"
+	"github.com/gohugoio/hugo/common/hashing"
+
 	"github.com/gohugoio/hugo/common/hugio"
+	"github.com/gohugoio/hugo/common/tasks"
+	"github.com/gohugoio/hugo/config/security"
 	"github.com/gohugoio/hugo/resources"
 	"github.com/gohugoio/hugo/resources/resource"
 )
@@ -35,61 +54,259 @@ import (
 // Client contains methods to create Resource objects.
 // tasks to Resource objects.
 type Client struct {
-	rs               *resources.Spec
-	httpClient       *http.Client
-	cacheGetResource *filecache.Cache
+	rs                   *resources.Spec
+	httpClient           *http.Client
+	httpCacheConfig      hhttpcache.ConfigCompiled
+	cacheGetResource     *filecache.Cache
+	resourceIDDispatcher contexthelpers.ContextDispatcher[string]
+
+	// Set when watching.
+	remoteResourceChecker *tasks.RunEvery
+	remoteResourceLogger  logg.LevelLogger
 }
+
+type contextKey uint8
+
+const (
+	contextKeyResourceID contextKey = iota
+	contextKeyProxyURL
+)
 
 // New creates a new Client with the given specification.
 func New(rs *resources.Spec) *Client {
+	fileCache := rs.FileCaches.GetResourceCache()
+	resourceIDDispatcher := contexthelpers.NewContextDispatcher[string](contextKeyResourceID)
+	httpCacheConfig := rs.Cfg.GetConfigSection("httpCacheCompiled").(hhttpcache.ConfigCompiled)
+	var remoteResourceChecker *tasks.RunEvery
+	if rs.Cfg.Watching() && !httpCacheConfig.IsPollingDisabled() {
+		remoteResourceChecker = &tasks.RunEvery{
+			HandleError: func(name string, err error) {
+				rs.Logger.Warnf("Failed to check remote resource: %s", err)
+			},
+			RunImmediately: false,
+		}
+
+		if err := remoteResourceChecker.Start(); err != nil {
+			panic(err)
+		}
+
+		rs.BuildClosers.Add(remoteResourceChecker)
+	}
+
+	httpTimeout := 2 * time.Minute // Need to cover retries.
+	if httpTimeout < (rs.Cfg.Timeout() + 30*time.Second) {
+		httpTimeout = rs.Cfg.Timeout() + 30*time.Second
+	}
+
 	return &Client{
-		rs: rs,
+		rs:                    rs,
+		httpCacheConfig:       httpCacheConfig,
+		resourceIDDispatcher:  resourceIDDispatcher,
+		remoteResourceChecker: remoteResourceChecker,
+		remoteResourceLogger:  rs.Logger.InfoCommand("remote"),
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: httpTimeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if err := rs.ExecHelper.Sec().CheckAllowedHTTPURL(req.URL.String()); err != nil {
+					return err
+				}
+				if len(via) >= 10 {
+					return errors.New("stopped after 10 redirects")
+				}
+				return nil
+			},
+			Transport: &httpcache.Transport{
+				Cache: fileCache.AsHTTPCache(),
+				CacheKey: func(req *http.Request) string {
+					return resourceIDDispatcher.Get(req.Context())
+				},
+				Around: func(req *http.Request, key string) func() {
+					return fileCache.NamedLock(key)
+				},
+				AlwaysUseCachedResponse: func(req *http.Request, key string) bool {
+					return !httpCacheConfig.For(req.URL.String())
+				},
+				ShouldCache: func(req *http.Request, resp *http.Response, key string) bool {
+					return shouldCache(resp.StatusCode)
+				},
+				CanStore: func(reqCacheControl, respCacheControl httpcache.CacheControl) (canStore bool) {
+					if httpCacheConfig.Base.RespectCacheControlNoStoreInResponse {
+						if _, ok := respCacheControl["no-store"]; ok {
+							return false
+						}
+					}
+					if httpCacheConfig.Base.RespectCacheControlNoStoreInRequest {
+						if _, ok := reqCacheControl["no-store"]; ok {
+							return false
+						}
+					}
+					return true
+				},
+				MarkCachedResponses: true,
+				EnableETagPair:      true,
+				Transport: &transport{
+					Cfg:    rs.Cfg,
+					Logger: rs.Logger,
+					base:   newSecureBaseTransport(rs.ExecHelper.Sec()),
+				},
+			},
 		},
-		cacheGetResource: rs.FileCaches.GetResourceCache(),
+		cacheGetResource: fileCache,
 	}
 }
 
-// Get creates a new Resource by opening the given filename in the assets filesystem.
-func (c *Client) Get(filename string) (resource.Resource, error) {
-	filename = filepath.Clean(filename)
-	return c.rs.ResourceCache.GetOrCreate(resources.ResourceCacheKey(filename), func() (resource.Resource, error) {
-		return c.rs.New(resources.ResourceSourceDescriptor{
-			Fs:             c.rs.BaseFs.Assets.Fs,
-			LazyPublish:    true,
-			SourceFilename: filename,
-		})
+// newSecureBaseTransport clones the default transport and installs a dial-time
+// hook that validates the resolved destination address against the security
+// policy, so a hostname resolving to an internal address cannot be used to
+// reach internal endpoints. See CheckAllowedHTTPAddress.
+//
+// Proxies are only used when security.http.proxyFromEnvironment is enabled.
+// A proxied connection is dialed to the proxy, not the destination, so the
+// address check is skipped for that dial; the user has opted into trusting
+// the proxy with the destination. The proxy decision is carried per request
+// in its context, so a direct dial is always validated, even to the proxy's
+// own address.
+func newSecureBaseTransport(sec security.Config) http.RoundTripper {
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	secureDialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control: func(network, address string, _ syscall.RawConn) error {
+			return sec.CheckAllowedHTTPAddress(network, address)
+		},
+	}
+	base.Proxy = nil
+	base.DialContext = secureDialer.DialContext
+
+	if !sec.HTTP.ProxyFromEnvironment {
+		return base
+	}
+
+	proxyFromCtx := func(ctx context.Context) *url.URL {
+		u, _ := ctx.Value(contextKeyProxyURL).(*url.URL)
+		return u
+	}
+	base.Proxy = func(req *http.Request) (*url.URL, error) {
+		return proxyFromCtx(req.Context()), nil
+	}
+	proxyDialer := &net.Dialer{Timeout: secureDialer.Timeout, KeepAlive: secureDialer.KeepAlive}
+	base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if u := proxyFromCtx(ctx); u != nil && canonicalAddr(u) == addr {
+			return proxyDialer.DialContext(ctx, network, addr)
+		}
+		return secureDialer.DialContext(ctx, network, addr)
+	}
+	return &proxyTransport{base: base, proxyFunc: httpproxy.FromEnvironment().ProxyFunc()}
+}
+
+// proxyTransport resolves the proxy for each request up front and stores it
+// in the request context, where both the Proxy and DialContext hooks of base
+// can see it.
+type proxyTransport struct {
+	base      *http.Transport
+	proxyFunc func(*url.URL) (*url.URL, error)
+}
+
+func (t *proxyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	u, err := t.proxyFunc(req.URL)
+	if err != nil {
+		return nil, err
+	}
+	if u != nil {
+		req = req.WithContext(context.WithValue(req.Context(), contextKeyProxyURL, u))
+	}
+	return t.base.RoundTrip(req)
+}
+
+// canonicalAddr mirrors net/http's canonicalAddr: the host:port the transport
+// dials for u, with the port defaulted from the scheme.
+func canonicalAddr(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		switch u.Scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		case "socks5", "socks5h":
+			port = "1080"
+		}
+	}
+	return net.JoinHostPort(u.Hostname(), port)
+}
+
+// Copy copies r to the new targetPath.
+func (c *Client) Copy(r resource.Resource, targetPath string) (resource.Resource, error) {
+	key := dynacache.CleanKey(targetPath) + "__copy"
+	return c.rs.ResourceCache.GetOrCreate(key, func() (resource.Resource, error) {
+		return resources.Copy(r, targetPath), nil
+	})
+}
+
+// Get creates a new Resource by opening the given pathname in the assets filesystem.
+func (c *Client) Get(pathname string) (resource.Resource, error) {
+	pathname = path.Clean(pathname)
+	key := dynacache.CleanKey(pathname) + "__get"
+
+	return c.rs.ResourceCache.GetOrCreate(key, func() (resource.Resource, error) {
+		// The resource file will not be read before it gets used (e.g. in .Content),
+		// so we need to check that the file exists here.
+		filename := filepath.FromSlash(pathname)
+		fi, err := c.rs.BaseFs.Assets.Fs.Stat(filename)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, nil
+			}
+			// A real error.
+			return nil, err
+		}
+
+		return c.getOrCreateFileResource(fi.(hugofs.FileMetaInfo))
 	})
 }
 
 // Match gets the resources matching the given pattern from the assets filesystem.
 func (c *Client) Match(pattern string) (resource.Resources, error) {
-	return c.match(pattern, false)
+	return c.match("__match", pattern, nil, false)
+}
+
+func (c *Client) ByType(tp string) resource.Resources {
+	res, err := c.match(path.Join("_byType", tp), "**", func(r resource.Resource) bool { return r.ResourceType() == tp }, false)
+	if err != nil {
+		panic(err)
+	}
+	return res
 }
 
 // GetMatch gets first resource matching the given pattern from the assets filesystem.
 func (c *Client) GetMatch(pattern string) (resource.Resource, error) {
-	res, err := c.match(pattern, true)
+	res, err := c.match("__get-match", pattern, nil, true)
 	if err != nil || len(res) == 0 {
 		return nil, err
 	}
 	return res[0], err
 }
 
-func (c *Client) match(pattern string, firstOnly bool) (resource.Resources, error) {
-	var name string
-	if firstOnly {
-		name = "__get-match"
-	} else {
-		name = "__match"
-	}
+func (c *Client) getOrCreateFileResource(info hugofs.FileMetaInfo) (resource.Resource, error) {
+	meta := info.Meta()
+	return c.rs.ResourceCache.GetOrCreateFile(filepath.ToSlash(meta.Filename), func() (resource.Resource, error) {
+		return c.rs.NewResource(resources.ResourceSourceDescriptor{
+			LazyPublish: true,
+			OpenReadSeekCloser: func() (hugio.ReadSeekCloser, error) {
+				return meta.Open()
+			},
+			NameNormalized:       meta.PathInfo.Path(),
+			NameOriginal:         meta.PathInfo.Unnormalized().Path(),
+			GroupIdentity:        meta.PathInfo,
+			TargetPath:           meta.PathInfo.Unnormalized().Path(),
+			SourceFilenameOrPath: meta.Filename,
+		})
+	})
+}
 
-	pattern = glob.NormalizePath(pattern)
-	partitions := glob.FilterGlobParts(strings.Split(pattern, "/"))
-	if len(partitions) == 0 {
-		partitions = []string{resources.CACHE_OTHER}
-	}
+func (c *Client) match(name, pattern string, matchFunc func(r resource.Resource) bool, firstOnly bool) (resource.Resources, error) {
+	pattern = hglob.NormalizePath(pattern)
+	partitions := hglob.FilterGlobParts(strings.Split(pattern, "/"))
 	key := path.Join(name, path.Join(partitions...))
 	key = path.Join(key, pattern)
 
@@ -97,17 +314,13 @@ func (c *Client) match(pattern string, firstOnly bool) (resource.Resources, erro
 		var res resource.Resources
 
 		handle := func(info hugofs.FileMetaInfo) (bool, error) {
-			meta := info.Meta()
-			r, err := c.rs.New(resources.ResourceSourceDescriptor{
-				LazyPublish: true,
-				FileInfo:    info,
-				OpenReadSeekCloser: func() (hugio.ReadSeekCloser, error) {
-					return meta.Open()
-				},
-				RelTargetFilename: meta.Path,
-			})
+			r, err := c.getOrCreateFileResource(info)
 			if err != nil {
 				return true, err
+			}
+
+			if matchFunc != nil && !matchFunc(r) {
+				return false, nil
 			}
 
 			res = append(res, r)
@@ -123,17 +336,84 @@ func (c *Client) match(pattern string, firstOnly bool) (resource.Resources, erro
 	})
 }
 
+type Options struct {
+	// The target path relative to the publish directory.
+	// Unix style path, i.e. "images/logo.png".
+	TargetPath string
+
+	// Whether the TargetPath has a hash in it which will change if the resource changes.
+	// If not, we will calculate a hash from the content.
+	TargetPathHasHash bool
+
+	// The content to create the Resource from.
+	CreateContent func() (func() (hugio.ReadSeekCloser, error), error)
+}
+
+// FromOpts creates a new Resource from the given Options.
+// Make sure to set optis.TargetPathHasHash if the TargetPath already contains a hash,
+// as this avoids the need to calculate it.
+// To create a new ReadSeekCloser from a string, use hugio.NewReadSeekerNoOpCloserFromString,
+// or hugio.NewReadSeekerNoOpCloserFromBytes for a byte slice.
+// See FromString.
+func (c *Client) FromOpts(opts Options) (resource.Resource, error) {
+	opts.TargetPath = path.Clean(opts.TargetPath)
+	var hash string
+	var newReadSeeker func() (hugio.ReadSeekCloser, error) = nil
+	if !opts.TargetPathHasHash {
+		var err error
+		newReadSeeker, err = opts.CreateContent()
+		if err != nil {
+			return nil, err
+		}
+		if err := func() error {
+			r, err := newReadSeeker()
+			if err != nil {
+				return err
+			}
+			defer r.Close()
+
+			hash, err = hashing.XxHashFromReaderHexEncoded(r)
+			if err != nil {
+				return err
+			}
+			return nil
+		}(); err != nil {
+			return nil, err
+		}
+	}
+
+	key := dynacache.CleanKey(opts.TargetPath) + hash
+	r, err := c.rs.ResourceCache.GetOrCreate(key, func() (resource.Resource, error) {
+		if newReadSeeker == nil {
+			var err error
+			newReadSeeker, err = opts.CreateContent()
+			if err != nil {
+				return nil, err
+			}
+		}
+		return c.rs.NewResource(
+			resources.ResourceSourceDescriptor{
+				LazyPublish:      true,
+				IncludeHashInKey: !opts.TargetPathHasHash,
+				GroupIdentity:    identity.Anonymous, // All usage of this resource are tracked via its string content.
+				OpenReadSeekCloser: func() (hugio.ReadSeekCloser, error) {
+					return newReadSeeker()
+				},
+				TargetPath: opts.TargetPath,
+			})
+	})
+
+	return r, err
+}
+
 // FromString creates a new Resource from a string with the given relative target path.
 func (c *Client) FromString(targetPath, content string) (resource.Resource, error) {
-	return c.rs.ResourceCache.GetOrCreate(path.Join(resources.CACHE_OTHER, targetPath), func() (resource.Resource, error) {
-		return c.rs.New(
-			resources.ResourceSourceDescriptor{
-				Fs:          c.rs.FileCaches.AssetsCache().Fs,
-				LazyPublish: true,
-				OpenReadSeekCloser: func() (hugio.ReadSeekCloser, error) {
-					return hugio.NewReadSeekerNoOpCloserFromString(content), nil
-				},
-				RelTargetFilename: filepath.Clean(targetPath),
-			})
+	return c.FromOpts(Options{
+		TargetPath: targetPath,
+		CreateContent: func() (func() (hugio.ReadSeekCloser, error), error) {
+			return func() (hugio.ReadSeekCloser, error) {
+				return hugio.NewReadSeekerNoOpCloserFromString(content), nil
+			}, nil
+		},
 	})
 }

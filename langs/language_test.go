@@ -14,37 +14,90 @@
 package langs
 
 import (
+	"sync"
 	"testing"
 
-	"github.com/gohugoio/hugo/config"
-
 	qt "github.com/frankban/quicktest"
+	"github.com/gohugoio/hugo/common/loggers"
+	"golang.org/x/text/collate"
+	"golang.org/x/text/language"
 )
 
-func TestGetGlobalOnlySetting(t *testing.T) {
+func TestCollator(t *testing.T) {
 	c := qt.New(t)
-	v := config.New()
-	v.Set("defaultContentLanguageInSubdir", true)
-	v.Set("contentDir", "content")
-	v.Set("paginatePath", "page")
-	lang := NewDefaultLanguage(v)
-	lang.Set("defaultContentLanguageInSubdir", false)
-	lang.Set("paginatePath", "side")
 
-	c.Assert(lang.GetBool("defaultContentLanguageInSubdir"), qt.Equals, true)
-	c.Assert(lang.GetString("paginatePath"), qt.Equals, "side")
+	var wg sync.WaitGroup
+
+	coll := &Collator{c: collate.New(language.English, collate.Loose)}
+
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			coll.Lock()
+			defer coll.Unlock()
+			defer wg.Done()
+			for range 10 {
+				k := coll.CompareStrings("abc", "def")
+				c.Assert(k, qt.Equals, -1)
+			}
+		}()
+	}
+	wg.Wait()
 }
 
-func TestLanguageParams(t *testing.T) {
+func BenchmarkCollator(b *testing.B) {
+	s := []string{"foo", "bar", "éntre", "baz", "qux", "quux", "corge", "grault", "garply", "waldo", "fred", "plugh", "xyzzy", "thud"}
+
+	doWork := func(coll *Collator) {
+		for i := range s {
+			for j := i + 1; j < len(s); j++ {
+				_ = coll.CompareStrings(s[i], s[j])
+			}
+		}
+	}
+
+	b.Run("Single", func(b *testing.B) {
+		coll := &Collator{c: collate.New(language.English, collate.Loose)}
+		for b.Loop() {
+			doWork(coll)
+		}
+	})
+
+	b.Run("Para", func(b *testing.B) {
+		b.RunParallel(func(pb *testing.PB) {
+			coll := &Collator{c: collate.New(language.English, collate.Loose)}
+
+			for pb.Next() {
+				coll.Lock()
+				doWork(coll)
+				coll.Unlock()
+			}
+		})
+	})
+}
+
+// TestLanguageLegacyFieldFallbacks verifies that Locale(), Direction(), and
+// Label() fall back to legacy LanguageConfig fields when the canonical fields
+// are not set. This matters for programmatic construction that bypasses the
+// allconfig migration (which normally copies legacy→canonical and clears them).
+func TestLanguageLegacyFieldFallbacks(t *testing.T) {
 	c := qt.New(t)
 
-	v := config.New()
-	v.Set("p1", "p1cfg")
-	v.Set("contentDir", "content")
+	l, err := NewLanguage("en", "en", "UTC", LanguageConfig{
+		LanguageCode:      "en-US",
+		LanguageName:      "English",
+		LanguageDirection: "ltr",
+	}, loggers.NewDefault())
+	c.Assert(err, qt.IsNil)
+	c.Assert(l.Locale(), qt.Equals, "en-US")
+	c.Assert(l.Label(), qt.Equals, "English")
+	c.Assert(l.Direction(), qt.Equals, "ltr")
 
-	lang := NewDefaultLanguage(v)
-	lang.SetParam("p1", "p1p")
-
-	c.Assert(lang.Params()["p1"], qt.Equals, "p1p")
-	c.Assert(lang.Get("p1"), qt.Equals, "p1cfg")
+	// Deprecated methods must not panic when logger is nil (no logger provided
+	// at construction). They delegate through Logger() which has a nil guard.
+	lNoLogger, err := NewLanguage("en", "en", "UTC", LanguageConfig{}, nil)
+	c.Assert(err, qt.IsNil)
+	_ = lNoLogger.LanguageCode()
+	_ = lNoLogger.LanguageName()
+	_ = lNoLogger.LanguageDirection()
 }

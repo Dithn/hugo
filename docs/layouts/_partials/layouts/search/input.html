@@ -1,0 +1,4 @@
+<div x-data="search" class="flex w-full">
+	{{ partial "./button.html" (dict "page" . "standalone" false) }}
+	{{ partialCached "./results.html" . }}
+</div>

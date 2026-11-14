@@ -3,16 +3,15 @@ package lang
 import (
 	"testing"
 
-	translators "github.com/gohugoio/localescompressed"
 	qt "github.com/frankban/quicktest"
-	"github.com/gohugoio/hugo/deps"
+	"github.com/gohugoio/hugo/langs"
 )
 
 func TestNumFmt(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(&deps.Deps{}, nil)
+	ns := New(nil)
 
 	cases := []struct {
 		prec  int
@@ -41,8 +40,8 @@ func TestNumFmt(t *testing.T) {
 		{6, -12345.6789, "-|,| ", "|", "-12 345,678900"},
 
 		// Arabic, ar_AE
-		{6, -12345.6789, "‏- ٫ ٬", "", "‏-12٬345٫678900"},
-		{6, -12345.6789, "‏-|٫| ", "|", "‏-12 345٫678900"},
+		{6, -12345.6789, "\u200f- ٫ ٬", "", "\u200f-12٬345٫678900"},
+		{6, -12345.6789, "\u200f-|٫| ", "|", "\u200f-12 345٫678900"},
 	}
 
 	for _, cas := range cases {
@@ -65,11 +64,10 @@ func TestNumFmt(t *testing.T) {
 }
 
 func TestFormatNumbers(t *testing.T) {
-
 	c := qt.New(t)
 
-	nsNn := New(&deps.Deps{}, translators.GetTranslator("nn"))
-	nsEn := New(&deps.Deps{}, translators.GetTranslator("en"))
+	nsNn := New(newTestLanguage(c, "nn"))
+	nsEn := New(newTestLanguage(c, "en"))
 	pi := 3.14159265359
 
 	c.Run("FormatNumber", func(c *qt.C) {
@@ -103,5 +101,40 @@ func TestFormatNumbers(t *testing.T) {
 		c.Assert(err, qt.IsNil)
 		c.Assert(got, qt.Equals, "$20,000.00")
 	})
+}
 
+// Issue 9446
+func TestLanguageKeyFormat(t *testing.T) {
+	c := qt.New(t)
+
+	nsUnderscoreUpper := New(newTestLanguage(c, "es_ES"))
+	nsUnderscoreLower := New(newTestLanguage(c, "es_es"))
+	nsHyphenUpper := New(newTestLanguage(c, "es-ES"))
+	nsHyphenLower := New(newTestLanguage(c, "es-es"))
+	pi := 3.14159265359
+
+	c.Run("FormatNumber", func(c *qt.C) {
+		c.Parallel()
+		got, err := nsUnderscoreUpper.FormatNumber(3, pi)
+		c.Assert(err, qt.IsNil)
+		c.Assert(got, qt.Equals, "3,142")
+
+		got, err = nsUnderscoreLower.FormatNumber(3, pi)
+		c.Assert(err, qt.IsNil)
+		c.Assert(got, qt.Equals, "3,142")
+
+		got, err = nsHyphenUpper.FormatNumber(3, pi)
+		c.Assert(err, qt.IsNil)
+		c.Assert(got, qt.Equals, "3,142")
+
+		got, err = nsHyphenLower.FormatNumber(3, pi)
+		c.Assert(err, qt.IsNil)
+		c.Assert(got, qt.Equals, "3,142")
+	})
+}
+
+func newTestLanguage(c *qt.C, locale string) *langs.Language {
+	l, err := langs.NewLanguage("en", "en", "", langs.LanguageConfig{Locale: locale}, nil)
+	c.Assert(err, qt.IsNil)
+	return l
 }

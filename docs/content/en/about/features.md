@@ -1,85 +1,140 @@
 ---
-title: Hugo Features
-linktitle: Hugo Features
-description: Hugo boasts blistering speed, robust content management, and a powerful templating language making it a great fit for all kinds of static websites.
-date: 2017-02-01
-publishdate: 2017-02-01
-lastmod: 2017-02-01
-menu:
-  docs:
-    parent: "about"
-    weight: 20
+title: Features
+description: Hugo's rich and powerful feature set provides the framework and tools to create static sites that build in seconds, often less.
+categories: []
+keywords: []
 weight: 20
-sections_weight: 20
-draft: false
-toc: true
 ---
 
-## General
+## Framework
 
-* [Extremely fast][] build times (&lt; 1 ms per page)
-* Completely cross platform, with [easy installation][install] on macOS, Linux, Windows, and more
-* Renders changes on the fly with [LiveReload][] as you develop
-* [Powerful theming][]
-* [Host your site anywhere][hostanywhere]
+[Multiplatform][]
+: Install Hugo's single executable on Linux, macOS, Windows, and more.
 
-## Organization
+[Multilingual][]
+: Localize your project for each language and region, including translations, images, dates, currencies, numbers, percentages, and collation sequence. Hugo's multilingual framework supports single-host and multihost configurations.
 
-* Straightforward [organization for your projects][], including website sections
-* Customizable [URLs][]
-* Support for configurable [taxonomies][], including categories and tags
-* [Sort content][] as you desire through powerful template [functions][]
-* Automatic [table of contents][] generation
-* [Dynamic menu][] creation
-* [Pretty URLs][] support
-* [Permalink][] pattern support
-* Redirects via [aliases][]
+[Output formats][]
+: Render each page of your project to one or more output formats, with granular control by page kind, section, and path. While HTML is the default output format, you can add JSON, RSS, CSV, and more. For example, create a REST API to access content.
 
-## Content
+[Templates][]
+: Create templates using variables, functions, and methods to transform your content, resources, and data into a published page. While HTML templates are the most common, you can create templates for any output format.
 
-* Native Markdown and Emacs Org-Mode support, as well as other languages via *external helpers* (see [supported formats][])
-* TOML, YAML, and JSON metadata support in [front matter][]
-* Customizable [homepage][]
-* Multiple [content types][]
-* Automatic and user defined [content summaries][]
-* [Shortcodes][] to enable rich content inside of Markdown
-* ["Minutes to Read"][pagevars] functionality
-* ["WordCount"][pagevars] functionality
+[Themes][]
+: Reduce development time and cost by using one of the hundreds of themes contributed by the Hugo community. Themes are available for corporate sites, documentation projects, image portfolios, landing pages, personal and professional blogs, resumes, CVs, and more.
 
-## Additional Features
+[Modules][]
+: Reduce development time and cost by creating or importing packaged combinations of archetypes, assets, content, data, templates, translation tables, static files, or configuration settings. A module may serve as the basis for a new project, or to augment an existing project.
 
-* Integrated [Disqus][] comment support
-* Integrated [Google Analytics][] support
-* Automatic [RSS][] creation
-* Support for [Go][] HTML templates
-* [Syntax highlighting][] powered by [Chroma][]
+[Privacy][]
+: Configure your project to help comply with regional privacy regulations.
 
+[Security][]
+: Hugo's security model is based on the premise that template and configuration authors are trusted, but content authors are not. This model enables generation of HTML output safe against code injection. Other protections prevent "shelling out" to arbitrary applications, limit access to specific environment variables, prevent connections to arbitrary remote data sources, and more.
 
-[aliases]: /content-management/urls/#aliases
-[Chroma]: https://github.com/alecthomas/chroma
-[content summaries]: /content-management/summaries/
-[content types]: /content-management/types/
-[Disqus]: https://disqus.com/
-[Dynamic menu]: /templates/menus/
-[Extremely fast]: https://github.com/bep/hugo-benchmark
-[front matter]: /content-management/front-matter/
-[functions]: /functions/
-[Go]: https://golang.org/pkg/html/template/
-[Google Analytics]: https://google-analytics.com/
-[homepage]: /templates/homepage/
-[hostanywhere]: /hosting-and-deployment/
-[install]: /getting-started/installing/
-[LiveReload]: /getting-started/usage/
-[organization for your projects]: /getting-started/directory-structure/
-[pagevars]: /variables/page/
-[Permalink]: /content-management/urls/#permalinks
-[Powerful theming]: /themes/
-[Pretty URLs]: /content-management/urls/
-[RSS]: /templates/rss/
+## Content authoring
+
+[Content formats][]
+: Create your content using Markdown, HTML, AsciiDoc, Emacs Org Mode, Pandoc, or reStructuredText. Markdown is the default content format, conforming to the [CommonMark][] and [GitHub Flavored Markdown][] specifications.
+
+[Markdown attributes][]
+: Apply HTML attributes such as `class` and `id` to Markdown images and block elements including blockquotes, fenced code blocks, headings, horizontal rules, lists, paragraphs, and tables.
+
+[Markdown extensions][]
+: Leverage the embedded Markdown extensions to create tables, definition lists, footnotes, task lists, inserted text, mark text, subscripts, superscripts, and more.
+
+[Markdown render hooks][]
+: Override the conversion of Markdown to HTML when rendering blockquotes, fenced code blocks, headings, images, links, and tables. For example, render every standalone image as an HTML `figure` element.
+
+[Diagrams][]
+: Use fenced code blocks and Markdown render hooks to include diagrams in your content.
+
+[Mathematics][]
+: Include mathematical equations and expressions in Markdown using LaTeX markup.
+
+[Syntax highlighting][]
+: Syntactically highlight code examples using Hugo's embedded syntax highlighter, enabled by default for fenced code blocks in Markdown. The syntax highlighter supports hundreds of code languages and dozens of styles.
+
+[Shortcodes][]
+: Use Hugo's embedded shortcodes, or create your own, to insert complex content. For example, use shortcodes to include `audio` and `video` elements, render tables from local or remote data sources, insert snippets from other pages, and more.
+
+## Content management
+
+[Multidimensional content model][]
+: Generate pages across any combination of language, version, and role from a single source. This allows a single piece of content to be published to multiple [sites](g) within your project, removing the need to duplicate files for different audiences or versions.
+
+[Content adapters][]
+: Create content adapters to dynamically add content when building your project. For example, use a content adapter to create pages from a remote data source such as JSON, TOML, YAML, or XML.
+
+[Taxonomies][]
+: Classify content to establish simple or complex logical relationships between pages. For example, create an authors taxonomy, and assign one or more authors to each page. Among other uses, the taxonomy system provides an inverted, weighted index to render a list of related pages, ordered by relevance.
+
+[Data][]
+: Augment your content using local or remote data sources including CSV, JSON, TOML, YAML, and XML. For example, create a shortcode to render an HTML table from a remote CSV file.
+
+[Menus][]
+: Provide rapid access to content via Hugo's menu system, configured automatically, globally, or on a page-by-page basis. The menu system is a key component of Hugo's multilingual architecture.
+
+[URL management][]
+: Serve any page from any path via global configuration or on a page-by-page basis.
+
+## Asset pipelines
+
+[CSS Processing][]
+: Bundle, transform, minify, create source maps, perform SRI hashing, and integrate with PostCSS.
+
+[Image processing][]
+: Convert, resize, crop, rotate, adjust colors, apply filters, overlay text and images, and extract metadata.
+
+[JavaScript bundling][]
+: Transpile TypeScript and JSX to JavaScript, bundle, tree shake, minify, create source maps, and perform SRI hashing.
+
+[Sass processing][]
+: Transpile Sass to CSS, bundle, tree shake, minify, create source maps, perform SRI hashing, and integrate with PostCSS.
+
+[Tailwind CSS processing][]
+: Compile Tailwind CSS utility classes into standard CSS, bundle, tree shake, optimize, minify, perform SRI hashing, and integrate with PostCSS.
+
+## Performance
+
+[Caching][]
+: Reduce build time and cost by rendering a _partial_ template once then cache the result, either globally or within a given context. For example, cache the result of an asset pipeline to prevent reprocessing on every rendered page.
+
+[Segmentation][]
+: Reduce build time and cost by partitioning your sites into segments. For example, render the home page and the "news section" every hour, and render the entire project once a week.
+
+[Minification][]
+: Minify HTML, CSS, and JavaScript to reduce file size, bandwidth consumption, and loading times.
+
+[CSS Processing]: /functions/css/build/
+[Caching]: /functions/partials/includecached/
+[CommonMark]: https://spec.commonmark.org/current/
+[Content adapters]: /content-management/content-adapters/
+[Content formats]: /content-management/formats/
+[Data]: /content-management/data-sources/
+[Diagrams]: /content-management/diagrams/
+[GitHub Flavored Markdown]: https://github.github.com/gfm/
+[Image processing]: /content-management/image-processing/
+[JavaScript bundling]: /functions/js/build/
+[Markdown attributes]: /content-management/markdown-attributes/
+[Markdown extensions]: /configuration/markup/#extensions
+[Markdown render hooks]: /render-hooks/introduction/
+[Mathematics]: /content-management/mathematics/
+[Menus]: /content-management/menus/
+[Minification]: /configuration/minify/
+[Modules]: /hugo-modules/
+[Multidimensional content model]: /quick-reference/glossary/#sites-matrix
+[Multilingual]: /content-management/multilingual/
+[Multiplatform]: /installation/
+[Output formats]: /configuration/output-formats/
+[Privacy]: /configuration/privacy/
+[Sass processing]: /functions/css/sass/
+[Security]: /about/security/
+[Segmentation]: /configuration/segments/
 [Shortcodes]: /content-management/shortcodes/
-[sort content]: /templates/
-[supported formats]: /content-management/formats/
-[Syntax highlighting]: /tools/syntax-highlighting/
-[table of contents]: /content-management/toc/
-[taxonomies]: /content-management/taxonomies/
-[URLs]: /content-management/urls/
+[Syntax highlighting]: /content-management/syntax-highlighting/
+[Tailwind CSS processing]: /functions/css/tailwindcss/
+[Taxonomies]: /content-management/taxonomies/
+[Templates]: /templates/introduction/
+[Themes]: https://themes.gohugo.io/
+[URL management]: /content-management/urls/

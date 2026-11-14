@@ -1,4 +1,4 @@
-// Copyright 2021 The Hugo Authors. All rights reserved.
+// Copyright 2025 The Hugo Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,68 +15,47 @@ package hugolib
 
 import (
 	"fmt"
-
-	qt "github.com/frankban/quicktest"
-
 	"strings"
 	"testing"
+
+	qt "github.com/frankban/quicktest"
 )
 
 func TestDateFormatMultilingual(t *testing.T) {
-	b := newTestSitesBuilder(t)
-	b.WithConfigFile("toml", `
-baseURL = "https://example.org"
+	t.Parallel()
 
+	files := `
+-- hugo.toml --
+baseURL = "https://example.org"
 defaultContentLanguage = "en"
 defaultContentLanguageInSubDir = true
-
 [languages]
 [languages.en]
 weight=10
 [languages.nn]
 weight=20
-	
-`)
-
-	pageWithDate := `---
+-- content/_index.en.md --
+---
 title: Page
 date: 2021-07-18
----	
+---
+-- content/_index.nn.md --
+---
+title: Page
+date: 2021-07-18
+---
+-- layouts/home.html --
+Date: {{ .Date | time.Format ":date_long" }}
 `
 
-	b.WithContent(
-		"_index.en.md", pageWithDate,
-		"_index.nn.md", pageWithDate,
-	)
-
-	b.WithTemplatesAdded("index.html", `
-Date: {{ .Date | time.Format ":date_long" }}
-	`)
-
-	b.Build(BuildCfg{})
+	b := Test(t, files)
 
 	b.AssertFileContent("public/en/index.html", `Date: July 18, 2021`)
 	b.AssertFileContent("public/nn/index.html", `Date: 18. juli 2021`)
-
 }
 
 func TestTimeZones(t *testing.T) {
-	b := newTestSitesBuilder(t)
-	b.WithConfigFile("toml", `
-baseURL = "https://example.org"
-
-defaultContentLanguage = "en"
-defaultContentLanguageInSubDir = true
-
-[languages]
-[languages.en]
-timeZone="UTC"
-weight=10
-[languages.nn]
-timeZone="America/Antigua"
-weight=20
-	
-`)
+	t.Parallel()
 
 	const (
 		pageTemplYaml = `---
@@ -85,7 +64,7 @@ date: %s
 lastMod: %s
 publishDate: %s
 expiryDate: %s
----	
+---
 `
 
 		pageTemplTOML = `+++
@@ -120,34 +99,46 @@ expiryDate=%s
 		)
 	}
 
-	b.WithContent(
-		// YAML
-		"short-date-yaml-unqouted.en.md", createPageContent(pageTemplYaml, shortDateTempl, false),
-		"short-date-yaml-unqouted.nn.md", createPageContent(pageTemplYaml, shortDateTempl, false),
-		"short-date-yaml-qouted.en.md", createPageContent(pageTemplYaml, shortDateTempl, true),
-		"short-date-yaml-qouted.nn.md", createPageContent(pageTemplYaml, shortDateTempl, true),
-		"long-date-yaml-unqouted.en.md", createPageContent(pageTemplYaml, longDateTempl, false),
-		"long-date-yaml-unqouted.nn.md", createPageContent(pageTemplYaml, longDateTempl, false),
-		// TOML
-		"short-date-toml-unqouted.en.md", createPageContent(pageTemplTOML, shortDateTempl, false),
-		"short-date-toml-unqouted.nn.md", createPageContent(pageTemplTOML, shortDateTempl, false),
-		"short-date-toml-qouted.en.md", createPageContent(pageTemplTOML, shortDateTempl, true),
-		"short-date-toml-qouted.nn.md", createPageContent(pageTemplTOML, shortDateTempl, true),
-	)
-
-	const datesTempl = `
+	files := `
+-- hugo.toml --
+baseURL = "https://example.org"
+defaultContentLanguage = "en"
+defaultContentLanguageInSubDir = true
+[languages]
+[languages.en]
+timeZone="UTC"
+weight=10
+[languages.nn]
+timeZone="America/Antigua"
+weight=20
+-- layouts/single.html --
 Date: {{ .Date | safeHTML  }}
 Lastmod: {{ .Lastmod | safeHTML  }}
 PublishDate: {{ .PublishDate | safeHTML  }}
 ExpiryDate: {{ .ExpiryDate | safeHTML  }}
+-- content/short-date-yaml-unqouted.en.md --
+` + createPageContent(pageTemplYaml, shortDateTempl, false) + `
+-- content/short-date-yaml-unqouted.nn.md --
+` + createPageContent(pageTemplYaml, shortDateTempl, false) + `
+-- content/short-date-yaml-qouted.en.md --
+` + createPageContent(pageTemplYaml, shortDateTempl, true) + `
+-- content/short-date-yaml-qouted.nn.md --
+` + createPageContent(pageTemplYaml, shortDateTempl, true) + `
+-- content/long-date-yaml-unqouted.en.md --
+` + createPageContent(pageTemplYaml, longDateTempl, false) + `
+-- content/long-date-yaml-unqouted.nn.md --
+` + createPageContent(pageTemplYaml, longDateTempl, false) + `
+-- content/short-date-toml-unqouted.en.md --
+` + createPageContent(pageTemplTOML, shortDateTempl, false) + `
+-- content/short-date-toml-unqouted.nn.md --
+` + createPageContent(pageTemplTOML, shortDateTempl, false) + `
+-- content/short-date-toml-qouted.en.md --
+` + createPageContent(pageTemplTOML, shortDateTempl, true) + `
+-- content/short-date-toml-qouted.nn.md --
+` + createPageContent(pageTemplTOML, shortDateTempl, true) + `
+`
 
-	`
-
-	b.WithTemplatesAdded(
-		"_default/single.html", datesTempl,
-	)
-
-	b.Build(BuildCfg{})
+	b := Test(t, files)
 
 	expectShortDateEn := `
 Date: 2021-07-10 00:00:00 +0000 UTC
@@ -165,13 +156,7 @@ ExpiryDate: 2099-07-13 15:28:01 +0000 UTC`
 
 	expectLongDateNn := strings.ReplaceAll(expectLongDateEn, "+0000 UTC", "-0400 AST")
 
-	// TODO(bep) create a common proposal for go-yaml, go-toml
-	// for a custom date parser hook to handle these time zones.
-	// JSON is omitted from this test as JSON does no (to my knowledge)
-	// have date literals.
-
 	// YAML
-	// Note: This is with go-yaml v2, I suspect v3 will fail with the unquouted values.
 	b.AssertFileContent("public/en/short-date-yaml-unqouted/index.html", expectShortDateEn)
 	b.AssertFileContent("public/nn/short-date-yaml-unqouted/index.html", expectShortDateNn)
 	b.AssertFileContent("public/en/short-date-yaml-qouted/index.html", expectShortDateEn)
@@ -181,36 +166,176 @@ ExpiryDate: 2099-07-13 15:28:01 +0000 UTC`
 	b.AssertFileContent("public/nn/long-date-yaml-unqouted/index.html", expectLongDateNn)
 
 	// TOML
-	// These fails: TOML (Burnt Sushi) defaults to local timezone.
-	// TODO(bep) check go-toml
 	b.AssertFileContent("public/en/short-date-toml-unqouted/index.html", expectShortDateEn)
 	b.AssertFileContent("public/nn/short-date-toml-unqouted/index.html", expectShortDateNn)
 	b.AssertFileContent("public/en/short-date-toml-qouted/index.html", expectShortDateEn)
 	b.AssertFileContent("public/nn/short-date-toml-qouted/index.html", expectShortDateNn)
-
 }
 
 // Issue 8832
 func TestTimeZoneInvalid(t *testing.T) {
-	b := newTestSitesBuilder(t)
+	t.Parallel()
 
-	b.WithConfigFile("toml", `
-	
+	files := `
+-- hugo.toml --
 timeZone = "America/LosAngeles"   # Should be America/Los_Angeles
-`)
+`
+	b, err := TestE(t, files)
 
-	err := b.CreateSitesE()
 	b.Assert(err, qt.Not(qt.IsNil))
-	b.Assert(err.Error(), qt.Contains, `failed to load config: invalid timeZone for language "en": unknown time zone America/LosAngeles`)
+	b.Assert(err.Error(), qt.Contains, `invalid timeZone for language "en": unknown time zone America/LosAngeles`)
 }
 
 // Issue 8835
 func TestTimeOnError(t *testing.T) {
-	b := newTestSitesBuilder(t)
+	t.Parallel()
 
-	b.WithTemplates("index.html", `time: {{ time "2020-10-20" "invalid-timezone" }}`)
-	b.WithContent("p1.md", "")
+	files := `
+-- hugo.toml --
+-- layouts/home.html --
+time: {{ time "2020-10-20" "invalid-timezone" }}
+-- content/p1.md --
+`
+	b, err := TestE(t, files)
 
-	b.Assert(b.BuildE(BuildCfg{}), qt.Not(qt.IsNil))
+	b.Assert(err, qt.Not(qt.IsNil))
+}
 
+func TestTOMLDates(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+timeZone = "America/Los_Angeles"
+-- content/_index.md --
+---
+date: "2020-10-20"
+---
+-- content/p1.md --
++++
+title = "TOML Date with UTC offset"
+date = 2021-08-16T06:00:00+00:00
++++
+
+
+## Foo
+-- data/mydata.toml --
+date = 2020-10-20
+talks = [
+	{ date = 2017-01-23, name = "Past talk 1" },
+	{ date = 2017-01-24, name = "Past talk 2" },
+	{ date = 2017-01-26, name = "Past talk 3" },
+	{ date = 2050-02-12, name = "Future talk 1" },
+	{ date = 2050-02-13, name = "Future talk 2" },
+]
+-- layouts/home.html --
+{{ $futureTalks := where hugo.Data.mydata.talks "date" ">" now }}
+{{ $pastTalks := where hugo.Data.mydata.talks "date" "<" now }}
+
+{{ $homeDate := site.Home.Date }}
+{{ $p1Date := (site.GetPage "p1").Date }}
+Future talks: {{ len $futureTalks }}
+Past talks: {{ len $pastTalks }}
+
+Home's Date should be greater than past: {{ gt $homeDate (index $pastTalks 0).date }}
+Home's Date should be less than future: {{ lt $homeDate (index $futureTalks 0).date }}
+Home's Date should be equal mydata date: {{ eq $homeDate hugo.Data.mydata.date }}
+Home date: {{ $homeDate }}
+mydata.date: {{ hugo.Data.mydata.date }}
+Full time: {{ $p1Date | time.Format ":time_full" }}
+`
+
+	b := Test(t, files)
+
+	b.AssertFileContent("public/index.html", `
+Future talks: 2
+Past talks: 3
+Home's Date should be greater than past: true
+Home's Date should be less than future: true
+Home's Date should be equal mydata date: true
+Full time: 6:00:00 am UTC
+`)
+}
+
+func TestPublisDateRollupIssue12438(t *testing.T) {
+	t.Parallel()
+
+	// To future Hugo maintainers, this test will start to fail in 2099.
+	files := `
+-- hugo.toml --
+disableKinds = ['home','rss','sitemap']
+[taxonomies]
+tag = 'tags'
+-- layouts/list.html --
+Date: {{ .Date.Format "2006-01-02" }}
+PublishDate: {{ .PublishDate.Format "2006-01-02" }}
+Lastmod: {{ .Lastmod.Format "2006-01-02" }}
+-- layouts/single.html --
+{{ .Title }}
+-- content/s1/p1.md --
+---
+title: p1
+date: 2024-03-01
+lastmod: 2024-03-02
+tags: [t1]
+---
+-- content/s1/p2.md --
+---
+title: p2
+date: 2024-04-03
+lastmod: 2024-04-04
+tags: [t1]
+---
+-- content/s1/p3.md --
+---
+title: p3
+lastmod: 2099-05-06
+tags: [t1]
+---
+
+`
+
+	// Test without publishDate in front matter.
+	b := Test(t, files)
+
+	b.AssertFileContent("public/s1/index.html", `
+		Date: 2024-04-03
+		PublishDate: 2024-04-03
+		Lastmod: 2024-04-04
+	`)
+
+	b.AssertFileContent("public/tags/index.html", `
+		Date: 2024-04-03
+		PublishDate: 2024-04-03
+		Lastmod: 2024-04-04
+	`)
+
+	b.AssertFileContent("public/tags/t1/index.html", `
+		Date: 2024-04-03
+		PublishDate: 2024-04-03
+		Lastmod: 2024-04-04
+	`)
+
+	// Test with publishDate in front matter.
+	files = strings.ReplaceAll(files, "lastmod", "publishDate")
+
+	b = Test(t, files)
+
+	b.AssertFileContent("public/s1/index.html", `
+		Date: 2024-04-03
+		PublishDate: 2024-04-04
+		Lastmod: 2024-04-03
+	`)
+
+	b.AssertFileContent("public/tags/index.html", `
+		Date: 2024-04-03
+		PublishDate: 2024-04-04
+		Lastmod: 2024-04-03
+	`)
+
+	b.AssertFileContent("public/tags/t1/index.html", `
+		Date: 2024-04-03
+		PublishDate: 2024-04-04
+		Lastmod: 2024-04-03
+	`)
 }

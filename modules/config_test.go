@@ -14,9 +14,13 @@
 package modules
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
-	"github.com/gohugoio/hugo/common/hugo"
+	"github.com/gohugoio/hugo/common/loggers"
+	"github.com/gohugoio/hugo/common/version"
 
 	"github.com/gohugoio/hugo/config"
 
@@ -33,9 +37,9 @@ func TestConfigHugoVersionIsValid(t *testing.T) {
 		{HugoVersion{Min: "0.33.0"}, true},
 		{HugoVersion{Min: "0.56.0-DEV"}, true},
 		{HugoVersion{Min: "0.33.0", Max: "0.55.0"}, false},
-		{HugoVersion{Min: "0.33.0", Max: "0.99.0"}, true},
+		{HugoVersion{Min: "0.33.0", Max: "0.199.0"}, true},
 	} {
-		c.Assert(test.in.IsValid(), qt.Equals, test.expect)
+		c.Assert(test.in.IsValid(), qt.Equals, test.expect, qt.Commentf("%#v", test.in))
 	}
 }
 
@@ -43,18 +47,20 @@ func TestDecodeConfig(t *testing.T) {
 	c := qt.New(t)
 
 	c.Run("Basic", func(c *qt.C) {
+		tempDir := c.TempDir()
 		tomlConfig := `
+workingDir = %q
 [module]
-
+workspace = "hugo.work"
 [module.hugoVersion]
 min = "0.54.2"
-max = "0.99.0"
+max = "0.199.0"
 extended = true
-
 [[module.mounts]]
 source="src/project/blog"
 target="content/blog"
-lang="en"
+[module.mounts.sites.matrix]
+languages="en"
 [[module.imports]]
 path="github.com/bep/mycomponent"
 [[module.imports.mounts]]
@@ -63,15 +69,20 @@ target="assets/bootstrap/scss"
 [[module.imports.mounts]]
 source="src/markdown/blog"
 target="content/blog"
-lang="en"
+[module.imports.mounts.sites.matrix]
+languages="en"
 `
-		cfg, err := config.FromConfigString(tomlConfig, "toml")
+
+		hugoWorkFilename := filepath.Join(tempDir, "hugo.work")
+		f, _ := os.Create(hugoWorkFilename)
+		f.Close()
+		cfg, err := config.FromConfigString(fmt.Sprintf(tomlConfig, tempDir), "toml")
 		c.Assert(err, qt.IsNil)
 
-		mcfg, err := DecodeConfig(cfg)
+		mcfg, err := DecodeConfig(loggers.NewDefault().Logger(), cfg)
 		c.Assert(err, qt.IsNil)
 
-		v056 := hugo.VersionString("0.56.0")
+		v056 := version.VersionString("0.56.0")
 
 		hv := mcfg.HugoVersion
 
@@ -79,9 +90,9 @@ lang="en"
 		c.Assert(v056.Compare(hv.Max), qt.Equals, 1)
 		c.Assert(hv.Extended, qt.Equals, true)
 
-		if hugo.IsExtended {
-			c.Assert(hv.IsValid(), qt.Equals, true)
-		}
+		c.Assert(hv.IsValid(), qt.Equals, true)
+
+		c.Assert(mcfg.Workspace, qt.Equals, hugoWorkFilename)
 
 		c.Assert(len(mcfg.Mounts), qt.Equals, 1)
 		c.Assert(len(mcfg.Imports), qt.Equals, 1)
@@ -89,7 +100,7 @@ lang="en"
 		imp.Path = "github.com/bep/mycomponent"
 		c.Assert(imp.Mounts[1].Source, qt.Equals, "src/markdown/blog")
 		c.Assert(imp.Mounts[1].Target, qt.Equals, "content/blog")
-		c.Assert(imp.Mounts[1].Lang, qt.Equals, "en")
+		c.Assert(imp.Mounts[1].Sites.Matrix.Languages, qt.DeepEquals, []string{"en"})
 	})
 
 	c.Run("Replacements", func(c *qt.C) {
@@ -108,7 +119,7 @@ path="github.com/bep/mycomponent"
 			cfg, err := config.FromConfigString(tomlConfig, "toml")
 			c.Assert(err, qt.IsNil)
 
-			mcfg, err := DecodeConfig(cfg)
+			mcfg, err := DecodeConfig(loggers.NewDefault().Logger(), cfg)
 			c.Assert(err, qt.IsNil)
 			c.Assert(mcfg.Replacements, qt.DeepEquals, []string{"a->b", "github.com/bep/mycomponent->c"})
 			c.Assert(mcfg.replacementsMap, qt.DeepEquals, map[string]string{
@@ -136,7 +147,7 @@ path="a"
 	cfg, err := config.FromConfigString(tomlConfig, "toml")
 	c.Assert(err, qt.IsNil)
 
-	modCfg, err := DecodeConfig(cfg)
+	modCfg, err := DecodeConfig(loggers.NewDefault().Logger(), cfg)
 	c.Assert(err, qt.IsNil)
 	c.Assert(len(modCfg.Imports), qt.Equals, 3)
 	c.Assert(modCfg.Imports[0].Path, qt.Equals, "a")
@@ -152,7 +163,7 @@ theme = ["a", "b"]
 	cfg, err := config.FromConfigString(tomlConfig, "toml")
 	c.Assert(err, qt.IsNil)
 
-	mcfg, err := DecodeConfig(cfg)
+	mcfg, err := DecodeConfig(loggers.NewDefault().Logger(), cfg)
 	c.Assert(err, qt.IsNil)
 
 	c.Assert(len(mcfg.Imports), qt.Equals, 2)

@@ -14,18 +14,15 @@
 package i18n
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
 
+	"github.com/bep/logg"
 	"github.com/gohugoio/hugo/common/types"
+	"github.com/gohugoio/hugo/config/testconfig"
 
-	"github.com/gohugoio/hugo/modules"
-
-	"github.com/gohugoio/hugo/tpl/tplimpl"
-
-	"github.com/gohugoio/hugo/common/loggers"
-	"github.com/gohugoio/hugo/langs"
 	"github.com/gohugoio/hugo/resources/page"
 	"github.com/spf13/afero"
 
@@ -33,15 +30,12 @@ import (
 
 	qt "github.com/frankban/quicktest"
 	"github.com/gohugoio/hugo/config"
-	"github.com/gohugoio/hugo/hugofs"
 )
-
-var logger = loggers.NewErrorLogger()
 
 type i18nTest struct {
 	name                             string
 	data                             map[string][]byte
-	args                             interface{}
+	args                             any
 	lang, id, expected, expectedFlag string
 }
 
@@ -179,7 +173,7 @@ one = "One minute to read"
 other = "{{ .Count }} minutes to read"
 `),
 		},
-		args:         map[string]interface{}{"Count": 1},
+		args:         map[string]any{"Count": 1},
 		lang:         "en",
 		id:           "readingTime",
 		expected:     "One minute to read",
@@ -207,7 +201,7 @@ one = "One minute to read"
 other = "{{ .Count }} minutes to read"
 `),
 		},
-		args:         map[string]interface{}{"Count": 21},
+		args:         map[string]any{"Count": 21},
 		lang:         "en",
 		id:           "readingTime",
 		expected:     "21 minutes to read",
@@ -391,66 +385,59 @@ other = "{{ . }} miesiąca"
 			},
 		},
 	} {
-
 		c.Run(test.name, func(c *qt.C) {
-			cfg := getConfig()
+			cfg := config.New()
 			cfg.Set("enableMissingTranslationPlaceholders", true)
-			fs := hugofs.NewMem(cfg)
+			cfg.Set("publishDir", "public")
+			afs := afero.NewMemMapFs()
 
-			err := afero.WriteFile(fs.Source, filepath.Join("i18n", test.lang+".toml"), []byte(test.templ), 0755)
+			err := afero.WriteFile(afs, filepath.Join("i18n", test.lang+".toml"), []byte(test.templ), 0o755)
 			c.Assert(err, qt.IsNil)
 
-			tp := NewTranslationProvider()
-			depsCfg := newDepsConfig(tp, cfg, fs)
-			depsCfg.Logger = loggers.NewWarningLogger()
-			d, err := deps.New(depsCfg)
-			c.Assert(err, qt.IsNil)
-			c.Assert(d.LoadResources(), qt.IsNil)
+			d, tp := prepareDeps(afs, cfg)
 
 			f := tp.t.Func(test.lang)
+			ctx := context.Background()
 
 			for _, variant := range test.variants {
-				c.Assert(f(test.id, variant.Key), qt.Equals, variant.Value, qt.Commentf("input: %v", variant.Key))
-				c.Assert(int(depsCfg.Logger.LogCounters().WarnCounter.Count()), qt.Equals, 0)
+				c.Assert(f(ctx, test.id, variant.Key), qt.Equals, variant.Value, qt.Commentf("input: %v", variant.Key))
+				c.Assert(d.Log.LoggCount(logg.LevelWarn), qt.Equals, 0)
 			}
-
 		})
-
 	}
 }
 
 func doTestI18nTranslate(t testing.TB, test i18nTest, cfg config.Provider) string {
 	tp := prepareTranslationProvider(t, test, cfg)
 	f := tp.t.Func(test.lang)
-	return f(test.id, test.args)
+	return f(context.Background(), test.id, test.args)
 }
 
 type countField struct {
-	Count interface{}
+	Count any
 }
 
 type noCountField struct {
 	Counts int
 }
 
-type countMethod struct {
-}
+type countMethod struct{}
 
-func (c countMethod) Count() interface{} {
+func (c countMethod) Count() any {
 	return 32.5
 }
 
 func TestGetPluralCount(t *testing.T) {
 	c := qt.New(t)
 
-	c.Assert(getPluralCount(map[string]interface{}{"Count": 32}), qt.Equals, 32)
-	c.Assert(getPluralCount(map[string]interface{}{"Count": 1}), qt.Equals, 1)
-	c.Assert(getPluralCount(map[string]interface{}{"Count": 1.5}), qt.Equals, "1.5")
-	c.Assert(getPluralCount(map[string]interface{}{"Count": "32"}), qt.Equals, "32")
-	c.Assert(getPluralCount(map[string]interface{}{"Count": "32.5"}), qt.Equals, "32.5")
-	c.Assert(getPluralCount(map[string]interface{}{"count": 32}), qt.Equals, 32)
-	c.Assert(getPluralCount(map[string]interface{}{"Count": "32"}), qt.Equals, "32")
-	c.Assert(getPluralCount(map[string]interface{}{"Counts": 32}), qt.Equals, nil)
+	c.Assert(getPluralCount(map[string]any{"Count": 32}), qt.Equals, 32)
+	c.Assert(getPluralCount(map[string]any{"Count": 1}), qt.Equals, 1)
+	c.Assert(getPluralCount(map[string]any{"Count": 1.5}), qt.Equals, "1.5")
+	c.Assert(getPluralCount(map[string]any{"Count": "32"}), qt.Equals, "32")
+	c.Assert(getPluralCount(map[string]any{"Count": "32.5"}), qt.Equals, "32.5")
+	c.Assert(getPluralCount(map[string]any{"count": 32}), qt.Equals, 32)
+	c.Assert(getPluralCount(map[string]any{"Count": "32"}), qt.Equals, "32")
+	c.Assert(getPluralCount(map[string]any{"Counts": 32}), qt.Equals, nil)
 	c.Assert(getPluralCount("foo"), qt.Equals, nil)
 	c.Assert(getPluralCount(countField{Count: 22}), qt.Equals, 22)
 	c.Assert(getPluralCount(countField{Count: 1.5}), qt.Equals, "1.5")
@@ -469,61 +456,32 @@ func TestGetPluralCount(t *testing.T) {
 
 func prepareTranslationProvider(t testing.TB, test i18nTest, cfg config.Provider) *TranslationProvider {
 	c := qt.New(t)
-	fs := hugofs.NewMem(cfg)
+	afs := afero.NewMemMapFs()
 
 	for file, content := range test.data {
-		err := afero.WriteFile(fs.Source, filepath.Join("i18n", file), []byte(content), 0755)
+		err := afero.WriteFile(afs, filepath.Join("i18n", file), []byte(content), 0o755)
 		c.Assert(err, qt.IsNil)
 	}
 
-	tp := NewTranslationProvider()
-	depsCfg := newDepsConfig(tp, cfg, fs)
-	d, err := deps.New(depsCfg)
-	c.Assert(err, qt.IsNil)
-	c.Assert(d.LoadResources(), qt.IsNil)
-
+	_, tp := prepareDeps(afs, cfg)
 	return tp
 }
 
-func newDepsConfig(tp *TranslationProvider, cfg config.Provider, fs *hugofs.Fs) deps.DepsCfg {
-	l := langs.NewLanguage("en", cfg)
-	l.Set("i18nDir", "i18n")
-	return deps.DepsCfg{
-		Language:            l,
-		Site:                page.NewDummyHugoSite(cfg),
-		Cfg:                 cfg,
-		Fs:                  fs,
-		Logger:              logger,
-		TemplateProvider:    tplimpl.DefaultTemplateProvider,
-		TranslationProvider: tp,
-	}
-}
-
-func getConfig() config.Provider {
-	v := config.New()
-	v.Set("defaultContentLanguage", "en")
-	v.Set("contentDir", "content")
-	v.Set("dataDir", "data")
-	v.Set("i18nDir", "i18n")
-	v.Set("layoutDir", "layouts")
-	v.Set("archetypeDir", "archetypes")
-	v.Set("assetDir", "assets")
-	v.Set("resourceDir", "resources")
-	v.Set("publishDir", "public")
-	langs.LoadLanguageSettings(v, nil)
-	mod, err := modules.CreateProjectModule(v)
-	if err != nil {
+func prepareDeps(afs afero.Fs, cfg config.Provider) (*deps.Deps, *TranslationProvider) {
+	d := testconfig.GetTestDeps(afs, cfg)
+	translationProvider := NewTranslationProvider()
+	d.TranslationProvider = translationProvider
+	d.Site = page.NewDummyHugoSite(d.Conf)
+	if err := d.Compile(nil); err != nil {
 		panic(err)
 	}
-	v.Set("allModules", modules.Modules{mod})
-
-	return v
+	return d, translationProvider
 }
 
 func TestI18nTranslate(t *testing.T) {
 	c := qt.New(t)
 	var actual, expected string
-	v := getConfig()
+	v := config.New()
 
 	// Test without and with placeholders
 	for _, enablePlaceholders := range []bool{false, true} {
@@ -544,14 +502,14 @@ func TestI18nTranslate(t *testing.T) {
 }
 
 func BenchmarkI18nTranslate(b *testing.B) {
-	v := getConfig()
+	v := config.New()
 	for _, test := range i18nTests {
 		b.Run(test.name, func(b *testing.B) {
 			tp := prepareTranslationProvider(b, test, v)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				f := tp.t.Func(test.lang)
-				actual := f(test.id, test.args)
+				actual := f(context.Background(), test.id, test.args)
 				if actual != test.expected {
 					b.Fatalf("expected %v got %v", test.expected, actual)
 				}

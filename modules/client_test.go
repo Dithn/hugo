@@ -22,8 +22,9 @@ import (
 	"testing"
 
 	"github.com/gohugoio/hugo/common/hexec"
+	"github.com/gohugoio/hugo/common/loggers"
 	"github.com/gohugoio/hugo/config/security"
-	"github.com/gohugoio/hugo/hugofs/glob"
+	hglob "github.com/gohugoio/hugo/hugofs/hglob"
 
 	"github.com/gohugoio/hugo/htesting"
 
@@ -33,6 +34,7 @@ import (
 )
 
 func TestClient(t *testing.T) {
+	htesting.SkipSlowTestUnlessCI(t)
 	modName := "hugo-modules-basic-test"
 	modPath := "github.com/gohugoio/tests/" + modName
 	defaultImport := "modh2_2"
@@ -49,15 +51,19 @@ github.com/gohugoio/hugoTestModules1_darwin/modh2_2@v1.4.0 github.com/gohugoio/h
 		workingDir, clean, err := htesting.CreateTempDir(hugofs.Os, fmt.Sprintf("%s-%d", modName, clientID))
 		c.Assert(err, qt.IsNil)
 		themesDir := filepath.Join(workingDir, "themes")
-		err = os.Mkdir(themesDir, 0777)
+		err = os.Mkdir(themesDir, 0o777)
+		c.Assert(err, qt.IsNil)
+		publishDir := filepath.Join(workingDir, "public")
+		err = os.Mkdir(publishDir, 0o777)
 		c.Assert(err, qt.IsNil)
 
 		ccfg := ClientConfig{
 			Fs:         hugofs.Os,
-			WorkingDir: workingDir,
 			CacheDir:   filepath.Join(workingDir, "modcache"),
+			WorkingDir: workingDir,
 			ThemesDir:  themesDir,
-			Exec:       hexec.New(security.DefaultConfig),
+			PublishDir: publishDir,
+			Exec:       hexec.New(security.DefaultConfig, "", loggers.NewDefault()),
 		}
 
 		withConfig(&ccfg)
@@ -151,7 +157,7 @@ project github.com/gohugoio/hugoTestModules1_darwin/modh2_2_2@v1.3.0+vendor
 			c, func(cfg *ClientConfig) {
 				cfg.ModuleConfig = mcfg
 				s := "github.com/gohugoio/hugoTestModules1_darwin/modh1_1v"
-				g, _ := glob.GetGlob(s)
+				g, _ := hglob.GetGlob(s)
 				cfg.IgnoreVendor = g
 			}, "modh1v")
 		defer clean()
@@ -184,7 +190,7 @@ project github.com/gohugoio/hugoTestModules1_darwin/modh2_2_2@v1.3.0+vendor
 		c.Assert(err, qt.IsNil)
 		c.Assert(dirname, qt.Equals, filepath.Join(client.ccfg.ThemesDir, "../../foo"))
 
-		dirname, err = client.createThemeDirname("../../foo", false)
+		_, err = client.createThemeDirname("../../foo", false)
 		c.Assert(err, qt.Not(qt.IsNil))
 
 		absDir := filepath.Join(client.ccfg.WorkingDir, "..", "..")
@@ -197,17 +203,70 @@ project github.com/gohugoio/hugoTestModules1_darwin/modh2_2_2@v1.3.0+vendor
 	})
 }
 
-var globAll, _ = glob.GetGlob("**")
+var globAll, _ = hglob.GetGlob("**")
 
 func TestGetModlineSplitter(t *testing.T) {
 	c := qt.New(t)
 
 	gomodSplitter := getModlineSplitter(true)
 
+	c.Assert(gomodSplitter("require ("), qt.IsNil)
 	c.Assert(gomodSplitter("\tgithub.com/BurntSushi/toml v0.3.1"), qt.DeepEquals, []string{"github.com/BurntSushi/toml", "v0.3.1"})
 	c.Assert(gomodSplitter("\tgithub.com/cpuguy83/go-md2man v1.0.8 // indirect"), qt.DeepEquals, []string{"github.com/cpuguy83/go-md2man", "v1.0.8"})
-	c.Assert(gomodSplitter("require ("), qt.IsNil)
 
 	gosumSplitter := getModlineSplitter(false)
 	c.Assert(gosumSplitter("github.com/BurntSushi/toml v0.3.1"), qt.DeepEquals, []string{"github.com/BurntSushi/toml", "v0.3.1"})
+}
+
+// Issue 14783
+func TestGetModlineSplitterIgnoresToolBlockIssue14783(t *testing.T) {
+	c := qt.New(t)
+
+	gomodSplitter := getModlineSplitter(true)
+
+	c.Assert(gomodSplitter("tool ("), qt.IsNil)
+	c.Assert(gomodSplitter("\tgithub.com/gohugoio/hugo"), qt.IsNil)
+	c.Assert(gomodSplitter(")"), qt.IsNil)
+	c.Assert(gomodSplitter("require ("), qt.IsNil)
+	c.Assert(gomodSplitter("\tgithub.com/foo/bar v1.2.3"), qt.DeepEquals, []string{"github.com/foo/bar", "v1.2.3"})
+}
+
+func TestClientConfigToEnv(t *testing.T) {
+	c := qt.New(t)
+
+	ccfg := ClientConfig{
+		WorkingDir: "/mywork",
+		CacheDir:   "/mycache",
+	}
+
+	env := ccfg.toEnv()
+
+	c.Assert(env, qt.DeepEquals, []string{"PWD=/mywork", "GO111MODULE=on", "GOFLAGS=-modcacherw", "GOPATH=/mycache", "GOWORK=", filepath.FromSlash("GOCACHE=/mycache/pkg/mod")})
+
+	ccfg = ClientConfig{
+		WorkingDir: "/mywork",
+		CacheDir:   "/mycache",
+		ModuleConfig: Config{
+			Proxy:     "https://proxy.example.org",
+			Private:   "myprivate",
+			NoProxy:   "mynoproxy",
+			Workspace: "myworkspace",
+			Auth:      "myauth",
+		},
+	}
+
+	env = ccfg.toEnv()
+
+	c.Assert(env, qt.DeepEquals, []string{
+		"PWD=/mywork",
+		"GO111MODULE=on",
+		"GOFLAGS=-modcacherw",
+		"GOPATH=/mycache",
+		"GOWORK=myworkspace",
+		filepath.FromSlash("GOCACHE=/mycache/pkg/mod"),
+		"GOPROXY=https://proxy.example.org",
+		"GOPRIVATE=myprivate",
+		"GONOPROXY=mynoproxy",
+		"GOAUTH=myauth",
+	})
 }

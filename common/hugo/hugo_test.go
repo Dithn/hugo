@@ -14,26 +14,48 @@
 package hugo
 
 import (
-	"fmt"
+	"context"
 	"testing"
 
+	"github.com/bep/logg"
 	qt "github.com/frankban/quicktest"
 )
 
-func TestHugoInfo(t *testing.T) {
+func TestDeprecationLogLevelFromVersion(t *testing.T) {
 	c := qt.New(t)
 
-	hugoInfo := NewInfo("")
+	c.Assert(deprecationLogLevelFromVersion("0.55.0"), qt.Equals, logg.LevelError)
+	ver := CurrentVersion
+	c.Assert(deprecationLogLevelFromVersion(ver.String()), qt.Equals, logg.LevelInfo)
+	ver.Minor -= 3
+	c.Assert(deprecationLogLevelFromVersion(ver.String()), qt.Equals, logg.LevelWarn)
+	ver.Minor -= 4
+	c.Assert(deprecationLogLevelFromVersion(ver.String()), qt.Equals, logg.LevelWarn)
+	ver.Minor -= 13
+	c.Assert(deprecationLogLevelFromVersion(ver.String()), qt.Equals, logg.LevelError)
 
-	c.Assert(hugoInfo.Version(), qt.Equals, CurrentVersion.Version())
-	c.Assert(fmt.Sprintf("%T", VersionString("")), qt.Equals, fmt.Sprintf("%T", hugoInfo.Version()))
-	c.Assert(hugoInfo.CommitHash, qt.Equals, commitHash)
-	c.Assert(hugoInfo.BuildDate, qt.Equals, buildDate)
-	c.Assert(hugoInfo.Environment, qt.Equals, "production")
-	c.Assert(string(hugoInfo.Generator()), qt.Contains, fmt.Sprintf("Hugo %s", hugoInfo.Version()))
-	c.Assert(hugoInfo.IsProduction(), qt.Equals, true)
-	c.Assert(hugoInfo.IsExtended(), qt.Equals, IsExtended)
+	// Added just to find the threshold for where we can remove deprecated items.
+	// Subtract 5 from the minor version of the first ERRORed version => 0.145.0.
+	c.Assert(deprecationLogLevelFromVersion("0.150.0"), qt.Equals, logg.LevelError)
+}
 
-	devHugoInfo := NewInfo("development")
-	c.Assert(devHugoInfo.IsProduction(), qt.Equals, false)
+func TestMarkupScope(t *testing.T) {
+	c := qt.New(t)
+
+	ctx := context.Background()
+	ctx = SetMarkupScope(ctx, "foo")
+
+	var hugoCtx Context
+	c.Assert(hugoCtx.MarkupScope(ctx), qt.Equals, "foo")
+	c.Assert(GetMarkupScope(ctx), qt.Equals, "foo")
+}
+
+func TestGetBuildInfo(t *testing.T) {
+	c := qt.New(t)
+
+	bi := GetBuildInfo()
+	// In test mode, build info may or may not be available.
+	if bi != nil {
+		c.Assert(bi.GoVersion, qt.Not(qt.Equals), "")
+	}
 }

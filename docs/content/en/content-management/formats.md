@@ -1,157 +1,175 @@
 ---
-title: Content Formats
-linktitle: Content Formats
-description: Both HTML and Markdown are supported content formats.
-date: 2017-01-10
-publishdate: 2017-01-10
-lastmod: 2017-04-06
-categories: [content management]
-keywords: [markdown,asciidoc,mmark,pandoc,content format]
-menu:
-  docs:
-    parent: "content-management"
-    weight: 20
-weight: 20	#rem
-draft: false
-aliases: [/content/markdown-extras/,/content/supported-formats/,/doc/supported-formats/]
-toc: true
+title: Content formats
+description: Create your content using Markdown, HTML, Emacs Org Mode, AsciiDoc, Pandoc, or reStructuredText.
+categories: []
+keywords: []
 ---
 
-You can put any file type into your `/content` directories, but Hugo uses the `markup` front matter value if set or the file extension (see `Markup identifiers` in the table below) to determine if the markup needs to be processed, e.g.:
+## Introduction
 
-* Markdown converted to HTML
-* [Shortcodes](/content-management/shortcodes/) processed
-* Layout applied
+You may mix content formats throughout your site. For example:
 
-## List of content formats
-
-The current list of content formats in Hugo:
-
-| Name  | Markup identifiers | Comment | 
-| ------------- | ------------- |-------------|
-| Goldmark  | md, markdown, goldmark  |Note that you can set the default handler of `md` and `markdown` to something else, see [Configure Markup](/getting-started/configuration-markup/).{{< new-in "0.60.0" >}} |
-| Blackfriday | blackfriday  |Blackfriday will eventually be deprecated.|
-|MMark|mmark|Mmark is deprecated and will be removed in a future release.|
-|Emacs Org-Mode|org|See [go-org](https://github.com/niklasfasching/go-org).|
-|AsciiDoc|asciidocext, adoc, ad|Needs [Asciidoctor][ascii] installed.|
-|RST|rst|Needs [RST](http://docutils.sourceforge.net/rst.html) installed.|
-|Pandoc|pandoc, pdc|Needs [Pandoc](https://www.pandoc.org/) installed.|
-|HTML|html, htm|To be treated as a content file, with layout, shortcodes etc., it must have front matter. If not, it will be copied as-is.|
-
-The `markup identifier` is fetched from either the `markup` variable in front matter or from the file extension. For markup-related configuration, see [Configure Markup](/getting-started/configuration-markup/).
-
-
-## External Helpers
-
-Some of the formats in the table above need external helpers installed on your PC. For example, for AsciiDoc files,
-Hugo will try to call the `asciidoctor` command. This means that you will have to install the associated
-tool on your machine to be able to use these formats.
-
-Hugo passes reasonable default arguments to these external helpers by default:
-
-- `asciidoctor`: `--no-header-footer -`
-- `rst2html`: `--leave-comments --initial-header-level=2`
-- `pandoc`: `--mathjax`
-
-{{% warning "Performance of External Helpers" %}}
-Because additional formats are external commands, generation performance will rely heavily on the performance of the external tool you are using. As this feature is still in its infancy, feedback is welcome.
-{{% /warning %}}
-
-### External Helper AsciiDoc
-
-[AsciiDoc](https://github.com/asciidoc/asciidoc) implementation EOLs in Jan 2020 and is no longer supported. 
-AsciiDoc development is being continued under [Asciidoctor](https://github.com/asciidoctor). The format AsciiDoc 
-remains of course. Please continue with the implementation Asciidoctor.
-
-### External Helper Asciidoctor
-
-The Asciidoctor community offers a wide set of tools for the AsciiDoc format that can be installed additionally to Hugo. 
-[See the Asciidoctor docs for installation instructions](https://asciidoctor.org/docs/install-toolchain/). Make sure that also all
-optional extensions like `asciidoctor-diagram` or `asciidoctor-html5s` are installed if required.
-
-{{% note %}}
-External `asciidoctor` command requires Hugo rendering to _disk_ to a specific destination directory. It is required to run Hugo with the command option `--destination`.
-{{% /note %}}
-
-Some [Asciidoctor](https://asciidoctor.org/man/asciidoctor/) parameters can be customized in Hugo:
-
-Parameter | Comment
---- | ---
-backend | Don't change this unless you know what you are doing.
-doctype | Currently, the only document type supported in Hugo is `article`.
-extensions | Possible extensions are `asciidoctor-html5s`, `asciidoctor-bibtex`, `asciidoctor-diagram`, `asciidoctor-interdoc-reftext`, `asciidoctor-katex`, `asciidoctor-latex`, `asciidoctor-mathematical`, `asciidoctor-question`, `asciidoctor-rouge`.
-attributes | Variables to be referenced in your AsciiDoc file. This is a list of variable name/value maps. See [Asciidoctor's attributes](https://asciidoctor.org/docs/asciidoc-syntax-quick-reference/#attributes-and-substitutions).
-noHeaderOrFooter | Output an embeddable document, which excludes the header, the footer, and everything outside the body of the document. Don't change this unless you know what you are doing.
-safeMode | Safe mode level `unsafe`, `safe`, `server` or `secure`. Don't change this unless you know what you are doing.
-sectionNumbers | Auto-number section titles.
-verbose | Verbosely print processing information and configuration file checks to stderr.
-trace | Include backtrace information on errors.
-failureLevel | The minimum logging level that triggers a non-zero exit code (failure).
-
-Hugo provides additional settings that don't map directly to Asciidoctor's CLI options:
-
-workingFolderCurrent
-: Sets the working directory to be the same as that of the AsciiDoc file being processed, so that [include](https://asciidoctor.org/docs/asciidoc-syntax-quick-reference/#include-files) will work with relative paths. This setting uses the `asciidoctor` cli parameter `--base-dir` and attribute `outdir=`. For rendering diagrams with [asciidoctor-diagram](https://asciidoctor.org/docs/asciidoctor-diagram/), `workingFolderCurrent` must be set to `true`.
-
-preserveTOC
-: By default, Hugo removes the table of contents generated by Asciidoctor and provides it through the built-in variable [`.TableOfContents`](/content-management/toc/) to enable further customization and better integration with the various Hugo themes. This option can be set to `true` to preserve Asciidoctor's TOC in the generated page.
-
-Below are all the AsciiDoc related settings in Hugo with their default values:
-
-{{< code-toggle config="markup.asciidocExt" />}}
-
-Notice that for security concerns only extensions that do not have path separators (either `\`, `/` or `.`) are allowed. That means that extensions can only be invoked if they are in one's ruby's `$LOAD_PATH` (ie. most likely, the extension has been installed by the user). Any extension declared relative to the website's path will not be accepted.
-
-Example of how to set extensions and attributes:
-
-```
-[markup.asciidocExt]
-    extensions = ["asciidoctor-html5s", "asciidoctor-diagram"]
-    workingFolderCurrent = true
-    [markup.asciidocExt.attributes]
-        my-base-url = "https://example.com/"
-        my-attribute-name = "my value"
+```tree
+content/
+└── posts/
+    ├── post-1.md
+    ├── post-2.adoc
+    ├── post-3.org
+    ├── post-4.pandoc
+    ├── post-5.rst
+    └── post-6.html
 ```
 
-In a complex Asciidoctor environment it is sometimes helpful to debug the exact call to your external helper with all 
-parameters. Run Hugo with `-v`. You will get an output like
+Regardless of content format, all content must have [front matter][], preferably including both `title` and `date`.
 
+Hugo selects the content renderer based on the `markup` identifier in front matter, falling back to the file extension. See the [classification](#classification) table below for a list of markup identifiers and recognized file extensions.
+
+## Formats
+
+Hugo supports the following content formats.
+
+### Markdown
+
+Create your content in [Markdown][] preceded by front matter.
+
+Markdown is Hugo's default content format. Hugo natively renders Markdown to HTML using [Goldmark][]. Goldmark is fast and conforms to the [CommonMark][] and [GitHub Flavored Markdown][] specifications. You can configure Goldmark in your [project configuration][configure goldmark].
+
+Hugo provides custom Markdown features including:
+
+[Attributes][]
+: Apply HTML attributes such as `class` and `id` to Markdown images and block elements including blockquotes, fenced code blocks, headings, horizontal rules, lists, paragraphs, and tables.
+
+[Extensions][]
+: Leverage the embedded Markdown extensions to create tables, definition lists, footnotes, task lists, inserted text, mark text, subscripts, superscripts, and more.
+
+[Mathematics][]
+: Include mathematical equations and expressions in Markdown using LaTeX markup.
+
+[Render hooks][]
+: Override the conversion of Markdown to HTML when rendering fenced code blocks, headings, images, and links. For example, render every standalone image as an HTML `figure` element.
+
+### HTML
+
+Create your content in [HTML][] preceded by front matter. The content is typically what you would place within an HTML document's `body` or `main` element.
+
+> [!NOTE]
+> The HTML content format is denied by default. See [`security.allowContent`][].
+
+### Emacs Org Mode
+
+Create your content in the [Emacs Org Mode][] format preceded by front matter. You can use Org Mode keywords for front matter. See [details][].
+
+> [!NOTE]
+> The Emacs Org Mode content format is denied by default. See [`security.allowContent`][].
+
+### AsciiDoc
+
+Create your content in the [AsciiDoc][] format preceded by front matter. Hugo renders AsciiDoc content to HTML using the `asciidoctor` executable. You must install `asciidoctor` and its dependencies (Ruby) to render the AsciiDoc content format.
+
+> [!NOTE]
+> Hugo's default security policy does not permit execution of the `asciidoctor` binary. You must add it to the [`security.exec.allow`][] list in your project configuration.
+
+You can configure the AsciiDoc renderer in your [project configuration][configure asciidoc].
+
+In its default configuration, Hugo passes these CLI flags when calling the `asciidoctor` executable:
+
+```sh
+--no-header-footer
 ```
-INFO 2019/12/22 09:08:48 Rendering book-as-pdf.adoc with C:\Ruby26-x64\bin\asciidoctor.bat using asciidoc args [--no-header-footer -r asciidoctor-html5s -b html5s -r asciidoctor-diagram --base-dir D:\prototypes\hugo_asciidoc_ddd\docs -a outdir=D:\prototypes\hugo_asciidoc_ddd\build -] ...
+
+The CLI flags passed to the `asciidoctor` executable depend on configuration. You may inspect the flags when building your project:
+
+```sh
+hugo build --logLevel info
 ```
 
-## Learn Markdown
+### Pandoc
 
-Markdown syntax is simple enough to learn in a single sitting. The following are excellent resources to get you up and running:
+Create your content in the [Pandoc][] format preceded by front matter. Hugo renders Pandoc content to HTML using the `pandoc` executable. You must install `pandoc` to render the Pandoc content format.
 
-* [Daring Fireball: Markdown, John Gruber (Creator of Markdown)][fireball]
-* [Markdown Cheatsheet, Adam Pritchard][mdcheatsheet]
-* [Markdown Tutorial (Interactive), Garen Torikian][mdtutorial]
-* [The Markdown Guide, Matt Cone][mdguide]
+> [!NOTE]
+> Hugo's default security policy does not permit execution of the `pandoc` binary. You must add it to the [`security.exec.allow`][] list in your project configuration.
 
-[`emojify` function]: /functions/emojify/
-[ascii]: https://asciidoctor.org/
-[bfconfig]: /getting-started/configuration/#configuring-blackfriday-rendering
-[blackfriday]: https://github.com/russross/blackfriday
-[mmark]: https://github.com/miekg/mmark
-[config]: /getting-started/configuration/
-[developer tools]: /tools/
-[emojis]: https://www.webpagefx.com/tools/emoji-cheat-sheet/
-[fireball]: https://daringfireball.net/projects/markdown/
-[gfmtasks]: https://guides.github.com/features/mastering-markdown/#syntax
-[helperssource]: https://github.com/gohugoio/hugo/blob/77c60a3440806067109347d04eb5368b65ea0fe8/helpers/general.go#L65
-[hl]: /content-management/syntax-highlighting/
-[hlsc]: /content-management/shortcodes/#highlight
-[hugocss]: /css/style.css
-[ietf]: https://tools.ietf.org/html/
-[mathjaxdocs]: https://docs.mathjax.org/en/latest/
-[mdcheatsheet]: https://github.com/adam-p/markdown-here/wiki/Markdown-Cheatsheet
-[mdguide]: https://www.markdownguide.org/
-[mdtutorial]: https://www.markdowntutorial.com/
-[Miek Gieben's website]: https://miek.nl/2016/march/05/mmark-syntax-document/
-[mmark]: https://github.com/mmarkdown/mmark
-[org]: https://orgmode.org/
-[pandoc]: https://www.pandoc.org/
-[rest]: https://docutils.sourceforge.io/rst.html
-[sc]: /content-management/shortcodes/
-[sct]: /templates/shortcode-templates/
+The CLI flags that Hugo passes when calling the `pandoc` executable depend on the installed Pandoc version.
+
+If the installed version supports the `--math-method` flag introduced in Pandoc 3.11:
+
+```sh
+--citeproc --math-method=mathjax
+```
+
+Otherwise:
+
+```sh
+--citeproc --mathjax
+```
+
+{{< new-in 0.164.0 />}}
+
+The `--citeproc` flag enables Pandoc's citation processing. When using Pandoc's bibliography and citations feature, control the bibliography file path, citation style, inline reference definitions, and other settings using a metadata block within the content file. For example:
+
+```md {file="content/example.pdc"}
+---
+title: home
+---
+
+This is a paragraph followed by a metadata block.
+
+---
+bibliography: foo.bib
+citation-style: ieee.csl
+link-citations: true
+---
+
+This is a citation: @einstein1905physics
+
+This is another citation: [@WatsonCrick1953, p. 33]
+```
+
+> [!NOTE]
+> Bibliography files and citation style files must exist on the local file system; they cannot be imported from Hugo modules. File paths may be relative to the project root or absolute.
+
+### reStructuredText
+
+Create your content in the [reStructuredText][] format preceded by front matter. Hugo renders reStructuredText content to HTML using [Docutils][], specifically `rst2html`. You must install Docutils and its dependencies (Python) to render the reStructuredText content format.
+
+> [!NOTE]
+> Hugo's default security policy does not permit execution of the `rst2html` binary. You must add it to the [`security.exec.allow`][] list in your project configuration.
+
+Hugo passes these CLI flags when calling the `rst2html` executable:
+
+```sh
+--leave-comments --initial-header-level=2
+```
+
+## Classification
+
+{{% include "/_common/content-format-table.md" %}}
+
+When converting content to HTML, Hugo uses:
+
+- Native renderers for Markdown, HTML, and Emacs Org Mode
+- External renderers for AsciiDoc, Pandoc, and reStructuredText
+
+Native renderers are faster than external renderers.
+
+[AsciiDoc]: https://asciidoc.org/
+[Attributes]: /content-management/markdown-attributes/
+[CommonMark]: https://spec.commonmark.org/current/
+[Docutils]: https://docutils.sourceforge.io/
+[Emacs Org Mode]: https://orgmode.org/
+[Extensions]: /configuration/markup/#extensions
+[GitHub Flavored Markdown]: https://github.github.com/gfm/
+[Goldmark]: https://github.com/yuin/goldmark
+[HTML]: https://developer.mozilla.org/en-US/docs/Learn_web_development/Getting_started/Your_first_website/Creating_the_content
+[Markdown]: https://daringfireball.net/projects/markdown/
+[Mathematics]: /content-management/mathematics/
+[Pandoc]: https://pandoc.org/MANUAL.html#pandocs-markdown
+[Render hooks]: /render-hooks/introduction/
+[`security.allowContent`]: /configuration/security/#allowcontent
+[`security.exec.allow`]: /configuration/security/#execallow
+[configure asciidoc]: /configuration/markup/#asciidoc
+[configure goldmark]: /configuration/markup/#goldmark
+[details]: /content-management/front-matter/#emacs-org-mode
+[front matter]: /content-management/front-matter/
+[reStructuredText]: https://docutils.sourceforge.io/rst.html

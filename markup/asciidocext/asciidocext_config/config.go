@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package asciidoc_config holds asciidoc related configuration.
+// Package asciidocext_config holds asciidoc related configuration.
 package asciidocext_config
 
 var (
@@ -19,7 +19,7 @@ var (
 	Default = Config{
 		Backend:              "html5",
 		Extensions:           []string{},
-		Attributes:           map[string]string{},
+		Attributes:           map[string]any{},
 		NoHeaderOrFooter:     true,
 		SafeMode:             "unsafe",
 		SectionNumbers:       false,
@@ -67,7 +67,7 @@ var (
 type Config struct {
 	Backend              string
 	Extensions           []string
-	Attributes           map[string]string
+	Attributes           map[string]any
 	NoHeaderOrFooter     bool
 	SafeMode             string
 	SectionNumbers       bool

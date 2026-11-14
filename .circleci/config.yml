@@ -1,51 +1,91 @@
-defaults: &defaults
-  docker:
-      - image: bepsays/ci-goreleaser:1.17.5
-  environment:
-    CGO_ENABLED: "0"
+parameters:
 
-version: 2
+defaults: &defaults
+  resource_class: large
+  docker:
+      - image: golang:1.27.4-bookworm
+environment: &buildenv
+      GOMODCACHE: /root/project/gomodcache
+version: 2.1
 jobs:
-  build:
+  prepare_release:
     <<: *defaults
+    environment: &buildenv
+        GOMODCACHE: /root/project/gomodcache
     steps:
       - checkout:
           path: hugo
+      - &git-config
+        run:
+           command: |
+            git config --global user.email "bjorn.erik.pedersen+hugoreleaser@gmail.com"
+            git config --global user.name "hugoreleaser"
       - run:
-            command: |
-                git clone git@github.com:gohugoio/hugoDocs.git
-                cd hugo
-                go mod download
-                sleep 5
-                go mod verify
-      - persist_to_workspace:
-          root: .
-          paths: .
-  release:
-    <<: *defaults
+          command: |
+            cd hugo
+            go mod download
+            go run -tags release main.go release --step 1
+      - save_cache:
+          key: git-sha-{{ .Revision }}
+          paths:
+            - hugo
+            - gomodcache
+  build:
+    <<: [*defaults]
+    environment:
+      <<: [*buildenv]
     steps:
-      - attach_workspace:
-          at: /root/project
+      - &restore-cache
+        restore_cache:
+          key: git-sha-{{ .Revision }}
+      - &install-hugoreleaser
+        run:
+          command: go install github.com/gohugoio/hugoreleaser@latest
       - run:
-            command: |
-                    cd hugo
-                    git config --global user.email "bjorn.erik.pedersen+hugoreleaser@gmail.com"
-                    git config --global user.name "hugoreleaser"
-                    go run -tags release main.go release -r ${CIRCLE_BRANCH}
-
+          no_output_timeout: 20m
+          command: |
+            mkdir -p /tmp/files/dist
+            cd hugo
+            hugoreleaser build -paths "builds/**" -workers 3 -dist /tmp/files/dist -chunks $CIRCLE_NODE_TOTAL -chunk-index $CIRCLE_NODE_INDEX
+      - persist_to_workspace:
+          root: /tmp/files
+          paths:
+            - dist
+    parallelism: 4
+  archive_and_release:
+    <<: [*defaults]
+    environment:
+        <<: [*buildenv]
+    steps:
+      - *restore-cache
+      - attach_workspace:
+          at: /tmp/workspace
+      - *git-config
+      - *install-hugoreleaser
+      - run:
+          name: Add github.com to known hosts
+          command: mkdir -p ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - run:
+          command: |
+            cp -a /tmp/workspace/dist/. ./hugo/dist
+      - run:
+          command: |
+            cd hugo
+            hugoreleaser archive
+            hugoreleaser release
+            go run -tags release main.go release --step 2
 workflows:
   version: 2
   release:
-      jobs:  
-        - build:
+      jobs:
+        - prepare_release:
             filters:
               branches:
                 only: /release-.*/
-        - hold:
-            type: approval
+        - build:
             requires:
-              - build
-        - release:
+            - prepare_release
+        - archive_and_release:
             context: org-global
             requires:
-              - hold
+            - build

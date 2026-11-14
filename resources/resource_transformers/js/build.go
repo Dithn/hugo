@@ -1,4 +1,4 @@
-// Copyright 2020 The Hugo Authors. All rights reserved.
+// Copyright 2024 The Hugo Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,198 +15,175 @@ package js
 
 import (
 	"fmt"
-	"io/ioutil"
-	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
-	"github.com/pkg/errors"
-
-	"github.com/spf13/afero"
-
-	"github.com/gohugoio/hugo/hugofs"
-
-	"github.com/gohugoio/hugo/common/herrors"
-
-	"github.com/gohugoio/hugo/hugolib/filesystems"
-	"github.com/gohugoio/hugo/media"
-	"github.com/gohugoio/hugo/resources/internal"
-
 	"github.com/evanw/esbuild/pkg/api"
+	"github.com/gohugoio/hugo/common/paths"
+	"github.com/gohugoio/hugo/helpers"
+	"github.com/gohugoio/hugo/hugolib/filesystems"
+	"github.com/gohugoio/hugo/internal/js/esbuild"
+	"github.com/gohugoio/hugo/media"
+
 	"github.com/gohugoio/hugo/resources"
 	"github.com/gohugoio/hugo/resources/resource"
 )
 
 // Client context for ESBuild.
 type Client struct {
-	rs  *resources.Spec
-	sfs *filesystems.SourceFilesystem
+	c *esbuild.BuildClient
 }
 
 // New creates a new client context.
-func New(fs *filesystems.SourceFilesystem, rs *resources.Spec) *Client {
+func New(fs *filesystems.SourceFilesystem, rs *resources.Spec, cssMode bool) *Client {
 	return &Client{
-		rs:  rs,
-		sfs: fs,
+		c: esbuild.NewBuildClient(fs, rs, cssMode),
 	}
 }
 
-type buildTransformation struct {
-	optsm map[string]interface{}
-	c     *Client
-}
-
-func (t *buildTransformation) Key() internal.ResourceTransformationKey {
-	return internal.NewResourceTransformationKey("jsbuild", t.optsm)
-}
-
-func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx) error {
-	ctx.OutMediaType = media.JavascriptType
-
-	opts, err := decodeOptions(t.optsm)
-	if err != nil {
-		return err
-	}
-
-	if opts.TargetPath != "" {
-		ctx.OutPath = opts.TargetPath
-	} else {
-		ctx.ReplaceOutPathExtension(".js")
-	}
-
-	src, err := ioutil.ReadAll(ctx.From)
-	if err != nil {
-		return err
-	}
-
-	opts.sourceDir = filepath.FromSlash(path.Dir(ctx.SourcePath))
-	opts.resolveDir = t.c.rs.WorkingDir // where node_modules gets resolved
-	opts.contents = string(src)
-	opts.mediaType = ctx.InMediaType
-
-	buildOptions, err := toBuildOptions(opts)
-	if err != nil {
-		return err
-	}
-
-	buildOptions.Plugins, err = createBuildPlugins(t.c, opts)
-	if err != nil {
-		return err
-	}
-
-	if buildOptions.Sourcemap == api.SourceMapExternal && buildOptions.Outdir == "" {
-		buildOptions.Outdir, err = ioutil.TempDir(os.TempDir(), "compileOutput")
-		if err != nil {
-			return err
-		}
-		defer os.Remove(buildOptions.Outdir)
-	}
-
-	if opts.Inject != nil {
-		// Resolve the absolute filenames.
-		for i, ext := range opts.Inject {
-			impPath := filepath.FromSlash(ext)
-			if filepath.IsAbs(impPath) {
-				return errors.Errorf("inject: absolute paths not supported, must be relative to /assets")
-			}
-
-			m := resolveComponentInAssets(t.c.rs.Assets.Fs, impPath)
-
-			if m == nil {
-				return errors.Errorf("inject: file %q not found", ext)
-			}
-
-			opts.Inject[i] = m.Filename
-
-		}
-
-		buildOptions.Inject = opts.Inject
-
-	}
-
-	result := api.Build(buildOptions)
-
-	if len(result.Errors) > 0 {
-
-		createErr := func(msg api.Message) error {
-			loc := msg.Location
-			if loc == nil {
-				return errors.New(msg.Text)
-			}
-			path := loc.File
-
-			var (
-				f   afero.File
-				err error
-			)
-
-			if strings.HasPrefix(path, nsImportHugo) {
-				path = strings.TrimPrefix(path, nsImportHugo+":")
-				f, err = hugofs.Os.Open(path)
-			} else {
-				var fi os.FileInfo
-				fi, err = t.c.sfs.Fs.Stat(path)
-				if err == nil {
-					m := fi.(hugofs.FileMetaInfo).Meta()
-					path = m.Filename
-					f, err = m.Open()
-				}
-
-			}
-
-			if err == nil {
-				fe := herrors.NewFileError("js", 0, loc.Line, loc.Column, errors.New(msg.Text))
-				err, _ := herrors.WithFileContext(fe, path, f, herrors.SimpleLineMatcher)
-				f.Close()
-				return err
-			}
-
-			return fmt.Errorf("%s", msg.Text)
-		}
-
-		var errors []error
-
-		for _, msg := range result.Errors {
-			errors = append(errors, createErr(msg))
-		}
-
-		// Return 1, log the rest.
-		for i, err := range errors {
-			if i > 0 {
-				t.c.rs.Logger.Errorf("js.Build failed: %s", err)
-			}
-		}
-
-		return errors[0]
-	}
-
-	if buildOptions.Sourcemap == api.SourceMapExternal {
-		content := string(result.OutputFiles[1].Contents)
-		symPath := path.Base(ctx.OutPath) + ".map"
-		re := regexp.MustCompile(`//# sourceMappingURL=.*\n?`)
-		content = re.ReplaceAllString(content, "//# sourceMappingURL="+symPath+"\n")
-
-		if err = ctx.PublishSourceMap(string(result.OutputFiles[0].Contents)); err != nil {
-			return err
-		}
-		_, err := ctx.To.Write([]byte(content))
-		if err != nil {
-			return err
-		}
-	} else {
-		_, err := ctx.To.Write(result.OutputFiles[0].Contents)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Process process esbuild transform
-func (c *Client) Process(res resources.ResourceTransformer, opts map[string]interface{}) (resource.Resource, error) {
+// Process processes a resource with the user provided options.
+// If importContext is not nil, imports are resolved in it first,
+// then in the assets filesystem (the same precedence as in js.Batch).
+func (c *Client) Process(res resources.ResourceTransformer, opts map[string]any) (resource.Resource, error) {
 	return res.Transform(
 		&buildTransformation{c: c, optsm: opts},
 	)
+}
+
+func (c *Client) transform(opts esbuild.Options, transformCtx *resources.ResourceTransformationCtx) (api.BuildResult, error) {
+	if transformCtx.DependencyManager != nil {
+		opts.DependencyManager = transformCtx.DependencyManager
+	}
+
+	opts.StdinSourcePath = transformCtx.SourcePath
+
+	pathSpec := c.c.Spec().PathSpec
+	outDir := path.Dir(transformCtx.OutPath)
+	if opts.IsCSS && opts.PublicPath == "" {
+		// Make file-loader artifact URLs (e.g. fonts, images) absolute relative
+		// to the web context root, so they resolve correctly whether the CSS is
+		// published as a file or inlined into HTML. See issue #14849.
+		// In multihost we build once for all hosts; using the deepest of the
+		// per-host base paths keeps the URL reachable on every host (each
+		// host's base path is a prefix).
+		var basePath string
+		if pathSpec.MultihostLongestBasePath != "" {
+			basePath = pathSpec.MultihostLongestBasePath
+		} else {
+			basePath = pathSpec.GetBasePath(false)
+		}
+		dir := outDir
+		if dir == "." {
+			dir = ""
+		}
+		opts.PublicPath = "/" + strings.TrimPrefix(path.Join(basePath, dir), "/")
+	}
+
+	result, err := c.c.Build(opts)
+	if err != nil {
+		return result, err
+	}
+
+	hasLinkedSourceMap := opts.ExternalOptions.SourceMap == "linked"
+	hasSourceMap := hasLinkedSourceMap || opts.ExternalOptions.SourceMap == "external"
+
+	spec := c.c.Spec()
+	mediaTypes := spec.MediaTypes()
+	baseURL := spec.Cfg.BaseURL().WithoutPath
+	newArtifact := func(relPermalink, fileName string) resources.Artifact {
+		mt, _, found := mediaTypes.GetFirstBySuffix(strings.TrimPrefix(path.Ext(fileName), "."))
+		if !found {
+			mt = media.Builtin.OctetType
+		}
+		return resources.NewArtifact(baseURL+relPermalink, relPermalink, mt)
+	}
+	fileLoaderRelPermalink := func(base string) string {
+		if opts.PublicPath != "" {
+			return strings.TrimSuffix(opts.PublicPath, "/") + "/" + paths.PathEscape(base)
+		}
+		return pathSpec.GetBasePath(false) + paths.PathEscape(paths.AddLeadingSlash(path.Join(outDir, base)))
+	}
+
+	// Classify output files by path rather than relying on array ordering,
+	// which esbuild does not guarantee.
+	var mainOutput []byte
+	var artifacts []resources.Artifact
+	for _, file := range result.OutputFiles {
+		basePath := path.Base(filepath.ToSlash(file.Path))
+		if strings.HasSuffix(basePath, ".map") {
+			if hasSourceMap {
+				if err = transformCtx.PublishSourceMap(file.Contents); err != nil {
+					return result, err
+				}
+				artifacts = append(artifacts, newArtifact(pathSpec.GetBasePath(false)+paths.PathEscape(paths.AddLeadingSlash(transformCtx.OutPath+".map")), basePath))
+			}
+		} else if isStdinEntryOutput(basePath) {
+			mainOutput = file.Contents
+		} else {
+			// File-loader artifact; publish directly.
+			if err = publishFileLoaderArtifact(pathSpec, opts.PublicPath, outDir, basePath, file.Contents, transformCtx); err != nil {
+				return result, err
+			}
+			artifacts = append(artifacts, newArtifact(fileLoaderRelPermalink(basePath), basePath))
+		}
+	}
+
+	sort.Slice(artifacts, func(i, j int) bool { return artifacts[i].RelPermalink() < artifacts[j].RelPermalink() })
+	transformCtx.Data["Artifacts"] = artifacts
+
+	if mainOutput == nil {
+		return result, fmt.Errorf("esbuild: entry point output not found")
+	}
+
+	if hasLinkedSourceMap {
+		symPath := path.Base(transformCtx.OutPath) + ".map"
+		if opts.IsCSS {
+			re := regexp.MustCompile(`/\*# sourceMappingURL=.*\n?`)
+			mainOutput = re.ReplaceAll(mainOutput, []byte("/*# sourceMappingURL="+symPath+" */\n"))
+		} else {
+			re := regexp.MustCompile(`//# sourceMappingURL=.*\n?`)
+			mainOutput = re.ReplaceAll(mainOutput, []byte("//# sourceMappingURL="+symPath+"\n"))
+		}
+	}
+
+	if _, err = transformCtx.To.Write(mainOutput); err != nil {
+		return result, err
+	}
+
+	return result, nil
+}
+
+// isStdinEntryOutput reports whether basePath is the entry-point output
+// generated by esbuild when using stdin mode (e.g. "stdin.js", "stdin.css").
+func isStdinEntryOutput(basePath string) bool {
+	return strings.HasPrefix(basePath, "stdin.")
+}
+
+// publishFileLoaderArtifact writes a file-loader artifact (e.g. a font or image
+// referenced from CSS) to the publish directory. In multihost mode the URL is
+// the same on all hosts, but each host has its own base path; the file is
+// placed where each host's URL resolution will find it.
+func publishFileLoaderArtifact(pathSpec *helpers.PathSpec, publicPath, outDir, basePath string, content []byte, transformCtx *resources.ResourceTransformationCtx) error {
+	if len(pathSpec.MultihostTargetBasePaths) == 0 {
+		return transformCtx.PublishTo(path.Join(outDir, basePath), content)
+	}
+
+	urlPath := path.Join(publicPath, basePath)
+	if !strings.HasPrefix(urlPath, "/") {
+		urlPath = "/" + urlPath
+	}
+	filenames := make([]string, len(pathSpec.MultihostTargetBasePaths))
+	for i, langPrefix := range pathSpec.MultihostTargetBasePaths {
+		filenames[i] = filepath.FromSlash(langPrefix + strings.TrimPrefix(urlPath, pathSpec.MultihostBasePaths[i]))
+	}
+	fw, err := helpers.OpenFilesForWriting(pathSpec.BaseFs.PublishFs, filenames...)
+	if err != nil {
+		return err
+	}
+	defer fw.Close()
+	_, err = fw.Write(content)
+	return err
 }

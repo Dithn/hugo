@@ -1,0 +1,706 @@
+---
+title: Documentation
+description: Help us to improve the documentation by identifying issues and suggesting changes.
+categories: []
+keywords: []
+---
+
+## Introduction
+
+We welcome corrections and improvements to the documentation. The documentation lives in a separate repository from the main project. To contribute:
+
+- For corrections and improvements to existing documentation, submit issues and pull requests to the [documentation repository][].
+- For documentation of new features, include the documentation changes in your pull request to the [project repository][].
+
+## Guidelines
+
+Follow Google's [developer documentation style guide][] where practical.
+
+### Writing style
+
+Adhere to these writing style conventions.
+
+- Prefer active voice and present tense.  
+
+  No → With Hugo you can build a static site.\
+  Yes → Build a static site with Hugo.
+
+  No → This will cause Hugo to generate HTML files in the `public` directory.\
+  Yes → Hugo generates HTML files in the `public` directory.
+
+- Use second person instead of third person.
+
+  No → Users should exercise caution when deleting files.\
+  Better → You must be cautious when deleting files.\
+  Best → Be cautious when deleting files.
+
+- Minimize adverbs.
+
+  No → Hugo is extremely fast.\
+  Yes → Hugo is fast.
+
+- Introduce lists and code examples with a complete sentence, not a fragment. Avoid lead-ins that lack a subject or verb:
+
+  No → To copy the repository:\
+  Yes → Use the `git clone` command to copy the repository.
+
+  Exception: within the `## Examples` section of a function or method reference page, use a short fragment to introduce each code block after the first. See [function and method reference pages](#function-and-method-reference-pages).
+
+- Use [basic english][] where possible for a global audience.
+- Prioritize current best practices over multiple options or historical information.
+- Avoid parenthetical "e.g." expressions, em dashes, and semicolons.
+
+  No → Use inline elements (e.g., `strong`, `em`) sparingly.\
+  Yes → Use inline elements such as `strong` and `em` sparingly.
+
+### Markdown
+
+Adhere to these Markdown conventions:
+
+- Use [ATX][] headings (levels 2-4), not [setext][] headings.
+- Use [collapsed link references][] instead of full or shortcut references. For example:
+
+  ```md {file="content/example.md"}
+  This is a [link][].
+
+  [link]: https://example.org
+  ```
+
+- Use [inline links][] to link to fragments on the same page. For example:
+
+  ```md {file="content/example.md"}
+  This is a link to a [fragment][#fragment].
+  ```
+
+- Use [fenced code blocks][] instead of [indented code blocks][].
+- Use hyphens, not asterisks, for unordered [list items][].
+- Prefix each ordered list item with `1.` instead of numbering the items sequentially.
+- Use [callouts](#callouts) instead of bold text for emphasis.
+- Do not mix [raw HTML][] within Markdown.
+- Do not use bold text in place of a heading or description term (`dt`).
+- Do not use Hugo's `ref` or `relref` shortcodes.
+- Do not place a list immediately after a heading; always precede it with a sentence.
+- Remove consecutive blank lines.
+- Remove trailing spaces.
+
+### Section headings
+
+Do not use formatting, such as backticks, bold, or italic, in section headings, levels `h1` through `h6`.
+
+- Use sentence-style capitalization.
+- Keep them concise.
+- Do not create a single subsection under a section; either add more subsections or remove the heading. This also applies to a single level 2 heading on an otherwise unheaded page: either add a second level 2 heading, or remove it and let the content flow as body text.
+- Precede the first subheading under a heading with a sentence introducing the subsections, unless the heading text alone makes the subsections' purpose obvious.
+
+### File paths and names
+
+Wrap directory names, file names, and file paths in backticks.
+
+### Directory names
+
+Refer to [component](g) directories by their names within the unified file system: the `archetypes`, `assets`, `content`, `data`, `i18n`, `layouts`, and `static` directories. Refer to the publish directory as the `public` directory. Mention the corresponding configuration setting, such as `contentDir` or `publishDir`, only when describing the setting itself.
+
+### Shortcode names
+
+Wrap shortcode names in backticks. Link to the shortcode page using the name as the link text, not the word "shortcode":
+
+```md {file="content/example.md"}
+Use the [`highlight`] shortcode to render syntax-highlighted code.
+
+[`highlight`]: /shortcodes/highlight/
+```
+
+### Glossary
+
+[Glossary][] terms are defined on individual pages, providing a central repository for definitions, though these pages are not directly linked from the site.
+
+Definitions must be complete sentences, with the first sentence defining the term. Italicize the first occurrence of the term and the first occurrence of any referenced glossary terms for consistency.
+
+Link to glossary terms using this syntax: `[term](g)`
+
+Term lookups are case-insensitive, ignore formatting, and support singular and plural forms. For example, all of these variations will link to the same glossary term:
+
+```md {file="content/example.md"}
+[global resource](g)
+[Global Resource](g)
+[Global Resources](g)
+[`Global Resources`](g)
+```
+
+Use the [`glossary-term`](#glossary-term) shortcode to insert a term definition:
+
+```md {file="content/example.md"}
+{{%/* glossary-term "global resource" */%}}
+```
+
+### Terminology
+
+Link to the [glossary][] as needed and use terms consistently. Pay particular attention to:
+
+- "client side" (noun), "client-side" (adjective)
+- "command line" (noun), "command-line" (adjective)
+- "file name" (two words)
+- "flag" (instead of "option" for command-line flags)
+- "front matter" (two words, except when referring to the configuration key)
+- "home page" (two words)
+- "map" (instead of "dictionary")
+- "Markdown" (capitalized)
+- "Node.js" (first mention per page), "Node" (subsequent mentions), "node" (for the executable), "npm" (always lowercase)
+- "open source" (noun), "open-source" (adjective)
+- "server side" (noun), "server-side" (adjective)
+- "standalone" (noun or adjective)
+- "stylesheet" (one word)
+- "website" (one word)
+
+### Products and executables
+
+Distinguish between a product or project and its command-line executable.
+
+- Can you buy it, download it, or read about it? It is a product or project: capitalize it and use plain text. For example: Hugo, Rclone, Docker.
+- Can you run it, type it in a terminal, or install its package? It is a tool or executable: use lowercase and wrap it in backticks. For example: `hugo`, `rclone`, `docker`.
+
+Context|Meaning|Example
+:--|:--|:--
+Product or project|The framework, website, or community|"Welcome to the Hugo community."
+Documentation|The official guides or site|"Read the Rclone documentation."
+CLI or binary|The command you run, or its path|"Run `hugo server` to preview your site."
+Package|The software installed on a system|"Ensure `rclone` is installed."
+
+### Template types
+
+When you refer to a template type, italicize it:
+
+```md {file="content/example.md"}
+When creating a _taxonomy_ template, do this...
+```
+
+However, if the template type is also a link, do not italicize it to avoid distracting formatting:
+
+```md {file="content/example.md"}
+When creating a [taxonomy][] template, do this...
+```
+
+Do not italicize the template type in a title, heading, or front matter description.
+
+## Front matter
+
+This site uses the front matter fields listed in the table below.
+
+Of the four required fields, only `title` and `description` require data.
+
+{{< code-toggle file=content/example.md fm=true >}}
+title: The title
+description: The description
+categories: []
+keywords: []
+{{< /code-toggle >}}
+
+If quotation marks are required, prefer single quotes to double quotes when possible.
+
+Field|Description|Required
+:--|:--|:--
+`title`|The page title|:heavy_check_mark:
+`linkTitle`|A short version of the page title|&nbsp;
+`description`|A complete sentence describing the page|:heavy_check_mark:
+`categories`|An array of terms in the categories taxonomy|:heavy_check_mark: [^1]
+`keywords`|An array of keywords used to identify related content|:heavy_check_mark: [^1]
+`publishDate`|Applicable to news items: the publication date|&nbsp;
+`params.alt_title`|An alternate title: used in the "see also" panel if provided|&nbsp;
+`params.functions_and_methods.aliases`|Applicable to function and method pages: an array of alias names|&nbsp;
+`params.functions_and_methods.returnType`|Applicable to function and method pages: the data type returned|&nbsp;
+`params.functions_and_methods.signatures`|Applicable to function and method pages: an array of signatures|&nbsp;
+`params.hide_in_this_section`|Whether to hide the "in this section" panel|&nbsp;
+`params.label`|Applicable to second-level section pages such as concepts, guides, references, and tutorials: a lowercase 3-letter code to identify the section, used in the `related` partial|&nbsp;
+`params.minversion`|Applicable to the quick start page: the minimum Hugo version required|&nbsp;
+`params.permalink`|Reserved for use by the news content adapter|&nbsp;
+`params.reference`|Applicable to glossary entries: a URL for additional information|&nbsp;
+`params.searchable`|Whether to add the content of this page to the search index. The default value is cascaded down from the project configuration; `true` if the page kind is `page`, and `false` if the page kind is one of `home`, `section`, `taxonomy`, or `term`. Add this field to override the default value.|&nbsp;
+`params.show_publish_date`|Whether to show the `publishDate` when rendering the page|&nbsp;
+`weight`|The page weight|&nbsp;
+`aliases`|Previous URLs used to access this page|&nbsp;
+`expirydate`|The expiration date|&nbsp;
+
+### Page titles
+
+Do not use formatting, such as backticks, bold, or italic, in the `title` field in front matter.
+
+- Use sentence-style capitalization.
+- Keep them concise.
+
+### Page descriptions
+
+Do not use formatting, such as backticks, bold, or italic, in the `description` field in front matter.
+
+When writing the page `description` use imperative present tense when possible. For example:
+
+{{< code-toggle file=content/en/functions/data/_index.md fm=true >}}
+title: Cast functions
+description: Use these functions to cast a value from one data type to another.
+{{< /code-toggle >}}
+
+### Related content
+
+When available, the "See also" sidebar displays related pages using Hugo's [related content][] feature, based on front matter keywords. We ensure consistent keyword usage by validating them against `data/keywords.yaml` during the build. If a keyword is not found, you'll be alerted and must either modify the keyword or update the data file. This validation process helps to refine the related content for better results.
+
+If the title in the "See also" sidebar is ambiguous or the same as another page, you can define an alternate title in the front matter:
+
+{{< code-toggle file=hugo >}}
+title = 'Long descriptive title'
+linkTitle = 'Short title'
+[params]
+alt_title = 'Whatever you want'
+{{< /code-toggle >}}
+
+Use of the alternate title is limited to the "See also" sidebar.
+
+> [!NOTE]
+> Think carefully before setting the `alt_title`. Use it only when necessary.
+
+## Redirects
+
+When you move or rename a page, create a redirect from the old URL to the new URL so that existing links and bookmarks continue to work. When you delete a page, do not create a redirect unless another page covers the same topic. When you build the site, Hugo generates a `_redirects` file that Netlify uses to redirect visitors.
+
+Create each redirect using either the `aliases` front matter field or the redirects data file, as described below. Both methods produce the same result.
+
+> [!IMPORTANT]
+> Define each redirect in either the `aliases` front matter field or the redirects data file, but not both. The build fails if you define the same old URL more than once, or if an old URL is the URL of an existing page.
+
+### Aliases
+
+Add the old URL to the [`aliases`][] front matter field of the page that visitors should be redirected to. Begin each alias with a slash (`/`). For example:
+
+{{< code-toggle file=content/en/section/new-name.md fm=true >}}
+title: New name
+aliases: [/section/old-name]
+{{< /code-toggle >}}
+
+Hugo redirects each alias to the page's URL. If you later move or rename the page, its aliases move with it.
+
+### Data file
+
+Add a record to the `assets/data/redirects.csv` file. For example:
+
+```csv {file="assets/data/redirects.csv"}
+"source","destination","date_added"
+"/section/old-name","/section/new-name/","2026-10-10"
+```
+
+Each record has these fields:
+
+`source`
+: (`string`) The old URL. Begin the value with a slash (`/`) and omit the trailing slash. Otherwise, the build fails.
+
+`destination`
+: (`string`) The URL of the page that visitors should be redirected to. Begin and end the value with a slash (`/`). The build fails if the value does not begin and end with a slash, or if it is not the URL of an existing page.
+
+`date_added`
+: (`string`) The date you added the record, in `YYYY-MM-DD` format. Maintainers use this field to identify and remove aged redirects.
+
+Keep the records sorted by `source`.
+
+## Function and method reference pages
+
+For function and method pages, start the front matter `description` with "Returns" to describe the value returned, or with "Reports whether" if the returned value is a boolean. If a function or method is used primarily for its side effects, describe the action it performs instead, using third-person present tense. For example:
+
+- `Returns a slice containing the elements after the first N elements of the given slice.`
+- `Reports whether the given page is in the given section.`
+- `Logs a WARNING from a template.`
+
+Structure the body of a function or method reference page with two level 2 headings, in this order:
+
+1. `## Usage`: prose describing behavior, arguments, and edge cases.
+1. `## Examples`: code blocks demonstrating the function or method.
+
+Open the `## Usage` section with a complete sentence that names the function or method by its canonical form, wrapped in backticks. Use the canonical form even when an alias exists.
+
+No → The `eq` function reports whether the first argument is equal to any of the subsequent arguments.\
+Yes → The `compare.Eq` function reports whether the first argument is equal to any of the subsequent arguments.
+
+This opening sentence typically overlaps with the front matter `description`. This is expected and intentional. Do not avoid or rephrase this overlap.
+
+When prose names an argument placeholder taken verbatim from the function's signature, wrap it in backticks. This does not apply when the argument is described in plain English instead of by its placeholder name.
+
+No → If CONTROL is truthy the function returns ARG1, otherwise it returns ARG2.\
+Yes → If `CONTROL` is truthy the function returns `ARG1`, otherwise it returns `ARG2`.
+
+Under `## Examples`, use one or more `go-html-template` code blocks to demonstrate the function or method. Always call the function or method by its canonical form, as described in [code examples](#code-examples).
+
+The first code block needs no lead-in sentence. Introduce each subsequent code block with a short lead-in ending in a colon. Do not repeat the function's name, and do not restate the `## Usage` prose:
+
+````md {file="content/example.md"}
+## Examples
+
+```go-html-template
+{{ compare.Eq 1 1 }} → true
+{{ compare.Eq 1 2 }} → false
+```
+
+Comparing numbers of different types:
+
+```go-html-template
+{{ compare.Eq 1 1.0 }} → true
+```
+````
+
+## Code examples
+
+Use short, focused code examples. When including template code examples, follow these conventions.
+
+- Indent with two spaces.
+- Insert a space after an opening action delimiter.
+- Insert a space before a closing action delimiter.
+- Do not add white space removal syntax to action delimiters unless required. For example, inline elements like `img` and `a` require whitespace removal on both sides.
+- Call a function or method by its canonical form, even when a legacy alias exists.
+
+  No → `{{ eq 1 1 }}`\
+  Yes → `{{ compare.Eq 1 1 }}`
+
+  Exception: pages whose purpose is to document aliases themselves may use aliases when specifically illustrating alias usage.
+
+- Do not update version references to third-party libraries embedded within Hugo (for example, the KaTeX display engine used by the `transform.ToMath` function) unless the embedded library version changes in Hugo's source code.
+
+````md {file="content/example.md"}
+```go-html-template
+{{ if eq $foo $bar }}
+  {{ fmt.Printf "%s is %s" $foo $bar }}
+{{ end }}
+```
+````
+
+### Fenced code blocks
+
+The code block render hook performs several language substitutions:
+
+Given language|Substitution|Reason
+:--|:--|:--
+`html`, `gotmpl`|`go-html-template`|Consistent rendering
+`bash`, `ksh`, `sh`, `shell`, `zsh`|`text`|Avoid highlighting quirks
+`md`, `mkd`|`text`|Avoid highlighting quirks
+`tree`|`text`|There isn't a `tree` lexer
+
+Set the language to `go-html-template` when including template examples:
+
+````md {file="content/example.md"}
+```go-html-template
+{{ if eq $foo "bar" }}
+  {{ print "foo is bar" }}
+{{ end }}
+```
+````
+
+Set the language to `md` when including Markdown examples:
+
+````md {file="content/example.md"}
+```md
+This is **bold** text.
+```
+````
+
+Set the language to `sh` when including command-line examples:
+
+````md {file="content/example.md"}
+```sh
+hugo server -D
+```
+````
+
+Set the language to `tree` when documenting the output of the `tree` command:
+
+````md {file="content/example.md"}
+```tree
+assets/
+└── images/
+    └── sunset.jpg
+```
+````
+
+Use the `file` and `copy` attributes to include a file name header and copy-to-clipboard button.
+
+````md {file="content/example.md"}
+```go-html-template {file="layouts/_partials/foo.html" copy=true}
+{{ if eq $foo "bar" }}
+  {{ print "foo is bar" }}
+{{ end }}
+```
+````
+
+Use the `details`, `open`, and `summary` attributes to wrap the code block in an initially-opened `details` element with a custom summary.
+
+````md {file="content/example.md"}
+```go-html-template {details=true open=true summary="layouts/_partials/foo.html" copy=true}
+{{ if eq $foo "bar" }}
+  {{ print "foo is bar" }}
+{{ end }}
+```
+````
+
+Whitespace trimming is enabled by default. Use `trim=false` to preserve leading and trailing whitespace.
+
+````md {file="content/example.md"}
+```go-html-template {trim=false}
+
+{{ if eq $foo "bar" }}
+  {{ print "foo is bar" }}
+{{ end }}
+
+```
+````
+
+### Escaping shortcode syntax
+
+Use this syntax to escape a shortcode call within examples:
+
+```md {file="content/example.md"}
+{{</*/* foo */*/>}}
+{{%/*/* foo */*/%}}
+```
+
+### Project configuration
+
+Use the [`code-toggle`](#code-toggle) shortcode to include project configuration examples:
+
+```md {file="content/example.md"}
+{{</* code-toggle file=hugo */>}}
+baseURL = 'https://example.org/'
+locale = 'en-US'
+title = 'My Site'
+{{</* /code-toggle */>}}
+```
+
+### Front matter examples
+
+Use the [`code-toggle`](#code-toggle) shortcode to include front matter example, setting the `fm` attribute to `true`:
+
+```md {file="content/example.md"}
+{{</* code-toggle file=content/posts/my-first-post.md fm=true */>}}
+title = 'My first post'
+date = 2023-11-09T12:56:07-08:00
+draft = false
+{{</* /code-toggle */>}}
+```
+
+## Callouts
+
+Use callouts, also known as admonitions, to visually emphasize important information.
+
+There are five callout types: `note`, `important`, `tip`, `warning`, and `caution`. The callout type is case-insensitive.
+
+```md {file="content/example.md"}
+> [!NOTE]
+> Useful information that users should know, even when skimming content.
+```
+
+> [!NOTE]
+> Useful information that users should know, even when skimming content.
+
+```md {file="content/example.md"}
+> [!IMPORTANT]
+> Key information users need to know to achieve their goal.
+```
+
+> [!IMPORTANT]
+> Key information users need to know to achieve their goal.
+
+```md {file="content/example.md"}
+> [!TIP]
+> Helpful advice for doing things better or more easily.
+```
+
+> [!TIP]
+> Helpful advice for doing things better or more easily.
+
+```md {file="content/example.md"}
+> [!WARNING]
+> Urgent info that needs immediate user attention to avoid problems.
+```
+
+> [!WARNING]
+> Urgent info that needs immediate user attention to avoid problems.
+
+```md {file="content/example.md"}
+> [!CAUTION]
+> Advises about risks or negative outcomes of certain actions.
+```
+
+> [!CAUTION]
+> Advises about risks or negative outcomes of certain actions.
+
+## Shortcodes
+
+These shortcodes are commonly used throughout the documentation. Other shortcodes are available for specialized use.
+
+### code-toggle
+
+Use the `code-toggle` shortcode to display examples of project configuration, front matter, or data files. This shortcode takes these arguments:
+
+`config`
+: (`string`) The section of `hugo.Data.docs.config` to render.
+
+`copy`
+: (`bool`) Whether to display a copy-to-clipboard button. Default is `false`.
+
+`datakey`
+: (`string`) The section of `hugo.Data.docs` to render.
+
+`file`
+: (`string`) The file name to display above the rendered code. Omit the file extension for project configuration examples.
+
+`fm`
+: (`bool`) Whether to render the code as front matter. Default is `false`.
+
+`skipHeader`
+: (`bool`) Whether to omit top-level key(s) when rendering a section of `hugo.Data.docs.config`.
+
+```md {file="content/example.md"}
+{{</* code-toggle file=hugo copy=true */>}}
+baseURL = 'https://example.org/'
+locale = 'en-US'
+title = 'My Site'
+{{</* /code-toggle */>}}
+```
+
+### deprecated-in
+
+Use the `deprecated-in` shortcode to indicate that a feature is deprecated:
+
+```md
+{{</* deprecated-in 0.144.0 /*/>}}
+```
+
+You can also include details:
+
+```md
+{{</* deprecated-in 0.144.0 */>}}
+Use the [`hugo.IsServer`](/docs/reference/functions/hugo/isserver/) function instead.
+{{</* /deprecated-in */>}}
+```
+
+The shortcode triggers a build warning if the specified version is older than a predefined threshold, based on differences in major and minor versions. This serves as a reminder to remove the shortcode call and the associated content. See [details][].
+
+When deprecating a feature that has its own page, also set the `expiryDate` in front matter to two years from the date of deprecation. Include a brief comment to explain the setting:
+
+```yaml
+expiryDate: 2028-03-03 # deprecated 2026-03-03 in v0.157.0
+```
+
+### eturl
+
+Use the embedded template URL (`eturl`) shortcode to insert an absolute URL to the source code for an embedded template. The shortcode takes a single argument, the base file name of the template (omit the file extension).
+
+```md {file="content/example.md"}
+This is a link to the [embedded alias template][].
+
+[embedded alias template]: <{{%/* eturl alias */%}}>
+```
+
+The `eturl` shortcode looks up URLs in `data/embedded_template_urls.toml`.
+
+### glossary-term
+
+Use the `glossary-term` shortcode to insert the definition of the given glossary term.
+
+```md {file="content/example.md"}
+{{%/* glossary-term scalar */%}}
+```
+
+### include
+
+Use the `include` shortcode to include content from another page.
+
+```md {file="content/example.md"}
+{{%/* include "_common/content-format-table.md" */%}}
+```
+
+### new-in
+
+Use the `new-in` shortcode to indicate a new feature:
+
+```md {file="content/example.md"}
+{{</* new-in 0.144.0 /*/>}}
+```
+
+You can also include details:
+
+```md {file="content/example.md"}
+{{</* new-in 0.144.0 */>}}
+This is a new feature.
+{{</* /new-in */>}}
+```
+
+The shortcode triggers a build warning if the specified version is older than a predefined threshold, based on differences in major and minor versions. This serves as a reminder to remove the shortcode call. See [details][].
+
+## GitHub workflow
+
+> [!NOTE]
+> This section assumes that you have a working knowledge of Git and GitHub, and are comfortable working on the command line.
+
+Use this workflow to create and submit pull requests.
+
+Step 1
+: Fork the [documentation repository][].
+
+Step 2
+: Clone your fork.
+
+Step 3
+: Create a new branch with a descriptive name that includes the corresponding issue number, if any:
+
+  ```sh
+  git checkout -b restructure-foo-page-99999
+  ```
+
+Step 4
+: Make changes.
+
+Step 5
+: Build the site locally to preview your changes.
+
+Step 6
+: Commit your changes with a descriptive commit message:
+
+  - Provide a summary on the first line, typically 50 characters or less, followed by a blank line.
+    - Begin the summary with one of `content`, `theme`, `config`, `all`, or `misc`, followed by a colon, a space, and a brief description of the change beginning with a capital letter
+    - Use imperative present tense
+  - Optionally, provide a detailed description where each line is 72 characters or less, followed by a blank line.
+  - Optionally, add one or more "Fixes" or "Closes" keywords, each on its own line, referencing the [issues][] addressed by this change.
+
+  For example:
+
+  ```sh
+  git commit -m "content: Restructure the taxonomy page
+
+  This restructures the taxonomy page by splitting topics into logical
+  sections, each with one or more examples.
+
+  Fixes #9999
+  Closes #9998"
+  ```
+
+Step 7
+: Push the new branch to your fork of the documentation repository.
+
+Step 8
+: Visit the [documentation repository][] and create a pull request (PR).
+
+Step 9
+: A project maintainer will review your PR and may request changes. You may delete your branch after the maintainer merges your PR.
+
+[^1]: The field is required, but its data is not.
+
+[ATX]: https://spec.commonmark.org/current/#atx-headings
+[Glossary]: /quick-reference/glossary/
+[`aliases`]: /content-management/front-matter/#aliases
+[basic english]: https://simple.wikipedia.org/wiki/Basic_English
+[collapsed link references]: https://discourse.gohugo.io/t/55714
+[details]: https://github.com/gohugoio/hugoDocs/blob/master/layouts/_partials/layouts/blocks/feature-state.html
+[developer documentation style guide]: https://developers.google.com/style
+[documentation repository]: https://github.com/gohugoio/hugoDocs/
+[fenced code blocks]: https://spec.commonmark.org/current/#fenced-code-blocks
+[indented code blocks]: https://spec.commonmark.org/current/#indented-code-blocks
+[inline links]: https://discourse.gohugo.io/t/55714
+[issues]: https://github.com/gohugoio/hugoDocs/issues
+[list items]: https://spec.commonmark.org/current/#list-items
+[project repository]: https://github.com/gohugoio/hugo
+[raw HTML]: https://spec.commonmark.org/current/#raw-html
+[related content]: /content-management/related-content/
+[setext]: https://spec.commonmark.org/current/#setext-heading

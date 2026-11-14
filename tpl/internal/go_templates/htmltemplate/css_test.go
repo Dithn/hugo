@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build go1.13,!windows
+//go:build !windows
 
 package template
 
@@ -233,6 +233,8 @@ func TestCSSValueFilter(t *testing.T) {
 		{`-exp\000052 ession(alert(1337))`, "ZgotmplZ"},
 		{`-expre\0000073sion`, "-expre\x073sion"},
 		{`@import url evil.css`, "ZgotmplZ"},
+		{"<", "ZgotmplZ"},
+		{">", "ZgotmplZ"},
 	}
 	for _, test := range tests {
 		got := cssValueFilter(test.css)

@@ -1,26 +1,15 @@
 ---
-title : "Page Resources"
-description : "Page resources -- images, other pages, documents, etc. -- have page-relative URLs and their own metadata."
-date: 2018-01-24
-categories: ["content management"]
-keywords: [bundle,content,resources]
-weight: 4003
-draft: false
-toc: true
-linktitle: "Page Resources"
-menu:
-  docs:
-    parent: "content-management"
-    weight: 31
+title: Page resources
+description: Use page resources to logically associate assets with a page.
+categories: []
+keywords: []
 ---
-Page resources are only accessible from [page bundles]({{< relref
-"/content-management/page-bundles" >}}), those directories with `index.md` or
-`_index.md` files at their root. Page resources are only available to the
-page with which they are bundled.
+
+Page resources are only accessible from [page bundles][], those directories with `index.md` or`_index.md` files at their root. Page resources are only available to the page with which they are bundled.
 
 In this example, `first-post` is a page bundle with access to 10 page resources including audio, data, documents, images, and video. Although `second-post` is also a page bundle, it has no page resources and is unable to directly access the page resources associated with `first-post`.
 
-```text
+```tree
 content
 └── post
     ├── first-post
@@ -40,169 +29,245 @@ content
         └── index.md (root of page bundle)
 ```
 
-## Properties
+## Examples
 
-ResourceType
-: The main type of the resource's [Media Type](/templates/output-formats/#media-types). For example, a file of MIME type `image/jpeg` has the ResourceType `image`. A `Page` will have `ResourceType` with value `page`.
+Use any of these methods on a `Page` object to capture page resources:
 
-{{< new-in "0.80.0" >}} Note that we in Hugo `v0.80.0` fixed a bug where non-image resources (e.g. video) would return the MIME sub type, e.g. `json`.
+- [`Resources.ByType`][]
+- [`Resources.Get`][]
+- [`Resources.GetMatch`][]
+- [`Resources.Match`][]
 
-Name
-: Default value is the filename (relative to the owning page). Can be set in front matter.
+ Once you have captured a resource, use any of the applicable [`Resource`][] methods to return a value or perform an action.
 
-Title
-: Default value is the same as `.Name`. Can be set in front matter.
+The following examples assume this content structure:
 
-Permalink
-: The absolute URL to the resource. Resources of type `page` will have no value.
+```tree
+content/
+└── example/
+    ├── data/
+    │  └── books.json   <-- page resource
+    ├── images/
+    │  ├── a.jpg        <-- page resource
+    │  └── b.jpg        <-- page resource
+    ├── snippets/
+    │  └── text.md      <-- page resource
+    └── index.md
+```
 
-RelPermalink
-: The relative URL to the resource. Resources of type `page` will have no value.
-
-Content
-: The content of the resource itself. For most resources, this returns a string
-with the contents of the file. Use this to create inline resources.
+Render a single image, and throw an error if the file does not exist:
 
 ```go-html-template
-{{ with .Resources.GetMatch "script.js" }}
-  <script>{{ .Content | safeJS }}</script>
-{{ end }}
-
-{{ with .Resources.GetMatch "style.css" }}
-  <style>{{ .Content | safeCSS }}</style>
-{{ end }}
-
-{{ with .Resources.GetMatch "img.png" }}
-  <img src="data:{{ .MediaType }};base64,{{ .Content | base64Encode }}">
+{{ $path := "images/a.jpg" }}
+{{ with .Resources.Get $path }}
+  <img src="{{ .RelPermalink }}" width="{{ .Width }}" height="{{ .Height }}" alt="">
+{{ else }}
+  {{ errorf "Unable to get page resource %q" $path }}
 {{ end }}
 ```
 
-MediaType
-: The MIME type of the resource, such as `image/jpeg`.
+Render all images, resized to 300 px wide:
 
-MediaType.MainType
-: The main type of the resource's MIME type. For example, a file of MIME type `application/pdf` has for MainType `application`.
-
-MediaType.SubType
-: The subtype of the resource's MIME type. For example, a file of MIME type `application/pdf` has for SubType `pdf`. Note that this is not the same as the file extension - PowerPoint files have a subtype of `vnd.mspowerpoint`.
-
-MediaType.Suffixes
-: A slice of possible suffixes for the resource's MIME type.
-
-## Methods
-ByType
-: Returns the page resources of the given type.
-
-```go
-{{ .Resources.ByType "image" }}
-```
-Match
-: Returns all the page resources (as a slice) whose `Name` matches the given Glob pattern ([examples](https://github.com/gobwas/glob/blob/master/readme.md)). The matching is case-insensitive.
-
-```go
-{{ .Resources.Match "images/*" }}
+```go-html-template
+{{ range .Resources.ByType "image" }}
+  {{ with .Resize "300x" }}
+    <img src="{{ .RelPermalink }}" width="{{ .Width }}" height="{{ .Height }}" alt="">
+  {{ end }}
+{{ end }}
 ```
 
-GetMatch
-: Same as `Match` but will return the first match.
+Render the markdown snippet:
 
-### Pattern Matching
-```go
-// Using Match/GetMatch to find this images/sunset.jpg ?
-.Resources.Match "images/sun*" ✅
-.Resources.Match "**/sunset.jpg" ✅
-.Resources.Match "images/*.jpg" ✅
-.Resources.Match "**.jpg" ✅
-.Resources.Match "*" 🚫
-.Resources.Match "sunset.jpg" 🚫
-.Resources.Match "*sunset.jpg" 🚫
-
+```go-html-template
+{{ with .Resources.Get "snippets/text.md" }}
+  {{ .Content }}
+{{ end }}
 ```
 
-## Page Resources Metadata
+List the titles in the data file, and throw an error if the file does not exist.
 
-The page resources' metadata is managed from the corresponding page's front matter with an array/table parameter named `resources`. You can batch assign values using [wildcards](https://tldp.org/LDP/GNU-Linux-Tools-Summary/html/x11655.htm).
+```go-html-template
+{{ $path := "data/books.json" }}
+{{ with .Resources.Get $path }}
+  {{ with . | transform.Unmarshal }}
+    <p>Books:</p>
+    <ul>
+      {{ range . }}
+        <li>{{ .title }}</li>
+      {{ end }}
+    </ul>
+  {{ end }}
+{{ else }}
+  {{ errorf "Unable to get page resource %q" $path }}
+{{ end }}
+```
 
-{{% note %}}
-Resources of type `page` get `Title` etc. from their own front matter.
-{{% /note %}}
+## Metadata
 
-name
-: Sets the value returned in `Name`.
+The page resources' metadata is managed from the corresponding page's front matter with an array parameter named `resources`.
 
-{{% warning %}}
-The methods `Match` and `GetMatch` use `Name` to match the resources.
-{{%/ warning %}}
+> [!NOTE]
+> Resources of type `page` get `Title` etc. from their own front matter.
 
-title
-: Sets the value returned in `Title`
+`src`
+: (`string`) Required. A [glob pattern](g) matching one or more page resources by file path, relative to the page bundle. Matching is case-insensitive. When the pattern matches multiple resources, the same metadata is applied to each.
 
-params
-: A map of custom key/values.
+`name`
+: (`string`) Sets the value returned by [`Name`][]. Supports the [`:counter`](#the-counter-placeholder) placeholder. After assignment, use `name`, not the original file path, with [`Resources.Get`][], [`Resources.Match`][], and [`Resources.GetMatch`][].
 
+`title`
+: (`string`) Sets the value returned by [`Title`][]. Supports the [`:counter`](#the-counter-placeholder) placeholder.
 
-###  Resources metadata example
+`params`
+: (`map`) A map of custom key-value pairs. When multiple array entries match the same resource, their `params` maps are merged; later entries take precedence for duplicate keys.
 
-{{< code-toggle copy="false">}}
+### Resources metadata example
+
+<!-- markdownlint-disable MD007 MD032 -->
+{{< code-toggle file=content/example.md fm=true >}}
 title: Application
-date : 2018-01-25
-resources :
-- src : "images/sunset.jpg"
-  name : "header"
-- src : "documents/photo_specs.pdf"
-  title : "Photo Specifications"
-  params:
-    icon : "photo"
-- src : "documents/guide.pdf"
-  title : "Instruction Guide"
-- src : "documents/checklist.pdf"
-  title : "Document Checklist"
-- src : "documents/payment.docx"
-  title : "Proof of Payment"
-- src : "**.pdf"
-  name : "pdf-file-:counter"
-  params :
-    icon : "pdf"
-- src : "**.docx"
-  params :
-    icon : "word"
+date: 2018-01-25
+resources:
+  - src: images/sunset.jpg
+    name: header
+  - src: documents/photo_specs.pdf
+    title: Photo Specifications
+  - src: documents/guide.pdf
+    title: Instruction Guide
+  - src: documents/checklist.pdf
+    title: Document Checklist
+  - src: documents/payment.docx
+    title: Proof of Payment
+  - src: "**.pdf"
+    name: pdf-file-:counter
+    params:
+      icon: pdf
+  - src: "**.docx"
+    params:
+      icon: word
 {{</ code-toggle >}}
+<!-- markdownlint-enable MD007 MD032 -->
 
 From the example above:
 
 - `sunset.jpg` will receive a new `Name` and can now be found with `.GetMatch "header"`.
-- `documents/photo_specs.pdf` will get the `photo` icon.
-- `documents/checklist.pdf`, `documents/guide.pdf` and `documents/payment.docx` will get `Title` as set by `title`.
-- Every `PDF` in the bundle except `documents/photo_specs.pdf` will get the `pdf` icon.
-- All `PDF` files will get a new `Name`. The `name` parameter contains a special placeholder [`:counter`](#the-counter-placeholder-in-name-and-title), so the `Name` will be `pdf-file-1`, `pdf-file-2`, `pdf-file-3`.
-- Every docx in the bundle will receive the `word` icon.
+- `documents/photo_specs.pdf`, `documents/guide.pdf`, `documents/checklist.pdf`, and `documents/payment.docx` will get `Title` as set by `title`.
+- All `PDF` files will get the `pdf` icon and a new `Name`. The `name` parameter contains a special placeholder [`:counter`](#the-counter-placeholder), so the `Name` will be `pdf-file-1`, `pdf-file-2`, `pdf-file-3`.
+- All `.docx` files will get the `word` icon.
 
-{{% warning %}}
-The __order matters__ --- Only the **first set** values of the `title`, `name` and `params`-**keys** will be used. Consecutive parameters will be set only for the ones not already set. In the above example, `.Params.icon` is first set to `"photo"` in `src = "documents/photo_specs.pdf"`. So that would not get overridden to `"pdf"` by the later set `src = "**.pdf"` rule.
-{{%/ warning %}}
+> [!NOTE]
+> For `name` and `title`, the first matching array entry wins; later matches are ignored. For `params`, all matching entries contribute; later entries take precedence for duplicate keys. Place more specific `src` patterns before broader wildcards to control which `name` and `title` values are applied.
 
-### The `:counter` placeholder in `name` and `title`
+### The counter placeholder
 
 The `:counter` is a special placeholder recognized in `name` and `title` parameters `resources`.
 
-The counter starts at 1 the first time they are used in either `name` or `title`.
+Each unique `src` pattern maintains independent counters for `name` and `title`, each starting at 1 with the first matching resource.
 
 For example, if a bundle has the resources `photo_specs.pdf`, `other_specs.pdf`, `guide.pdf` and `checklist.pdf`, and the front matter has specified the `resources` as:
 
-{{< code-toggle copy="false">}}
+{{< code-toggle file=content/inspections/engine/index.md fm=true >}}
+title = 'Engine inspections'
 [[resources]]
-  src = "*specs.pdf"
-  title = "Specification #:counter"
+  src = '*specs.pdf'
+  title = 'Specification #:counter'
 [[resources]]
-  src = "**.pdf"
-  name = "pdf-file-:counter"
+  src = '**.pdf'
+  name = 'pdf-file-:counter.pdf'
 {{</ code-toggle >}}
 
 the `Name` and `Title` will be assigned to the resource files as follows:
 
-| Resource file     | `Name`            | `Title`               |
-|-------------------|-------------------|-----------------------|
-| checklist.pdf     | `"pdf-file-1.pdf` | `"checklist.pdf"`     |
-| guide.pdf         | `"pdf-file-2.pdf` | `"guide.pdf"`         |
-| other\_specs.pdf  | `"pdf-file-3.pdf` | `"Specification #1"` |
-| photo\_specs.pdf  | `"pdf-file-4.pdf` | `"Specification #2"` |
+| Resource file    | `Name`             | `Title`              |
+|------------------|--------------------|----------------------|
+| checklist.pdf    | `"pdf-file-1.pdf"` | `"checklist.pdf"`    |
+| guide.pdf        | `"pdf-file-2.pdf"` | `"guide.pdf"`        |
+| other\_specs.pdf | `"pdf-file-3.pdf"` | `"Specification #1"` |
+| photo\_specs.pdf | `"pdf-file-4.pdf"` | `"Specification #2"` |
+
+## Multilingual
+
+By default, with a multilingual single-host project, Hugo does not duplicate shared page during the build.
+
+> [!NOTE]
+> This behavior is limited to Markdown content. Shared page resources for other [content formats][] are copied into each language bundle.
+
+Consider this project configuration:
+
+{{< code-toggle file=hugo >}}
+defaultContentLanguage = 'de'
+defaultContentLanguageInSubdir = true
+
+[languages.de]
+label = 'Deutsch'
+locale = 'de-DE'
+weight = 1
+
+[languages.en]
+label = 'English'
+locale = 'en-US'
+weight = 2
+{{< /code-toggle >}}
+
+And this content:
+
+```tree
+content/
+└── my-bundle/
+    ├── a.jpg     <-- shared page resource
+    ├── b.jpg     <-- shared page resource
+    ├── c.de.jpg
+    ├── c.en.jpg
+    ├── index.de.md
+    └── index.en.md
+```
+
+Hugo places the shared resources in the page bundle for the default content language:
+
+```tree
+public/
+├── de/
+│   ├── my-bundle/
+│   │   ├── a.jpg     <-- shared page resource
+│   │   ├── b.jpg     <-- shared page resource
+│   │   ├── c.de.jpg
+│   │   └── index.html
+│   └── index.html
+├── en/
+│   ├── my-bundle/
+│   │   ├── c.en.jpg
+│   │   └── index.html
+│   └── index.html
+└── index.html
+```
+
+This approach reduces build times, storage requirements, bandwidth consumption, and deployment times, ultimately reducing cost.
+
+> [!IMPORTANT]
+> To resolve Markdown link and image destinations to the correct location, you must use link and image render hooks that capture the page resource with the [`Resources.Get`][] method, and then invoke its [`RelPermalink`][] method.
+>
+> In its default configuration, Hugo automatically uses the [embedded link render hook][] and the [embedded image render hook][] for multilingual single-host projects, specifically when the [duplication of shared page resources][] feature is disabled. This is the default behavior for such projects. If custom link or image render hooks are defined by your project, modules, or themes, these will be used instead.
+>
+> You can also configure Hugo to `always` use the embedded link or image render hook, use it only as a `fallback`, or `never` use it. See [details][].
+
+Although duplicating shared page resources is inefficient, you can enable this feature in your project configuration if desired:
+
+{{< code-toggle file=hugo >}}
+[markup.goldmark]
+duplicateResourceFiles = true
+{{< /code-toggle >}}
+
+[`Name`]: /methods/resource/name/
+[`RelPermalink`]: /methods/resource/relpermalink/
+[`Resource`]: /methods/resource/
+[`Resources.ByType`]: /methods/page/resources#bytype
+[`Resources.GetMatch`]: /methods/page/resources#getmatch
+[`Resources.Get`]: /methods/page/resources/#get
+[`Resources.Match`]: /methods/page/resources#match
+[`Title`]: /methods/resource/title/
+[content formats]: /content-management/formats/
+[details]: /configuration/markup/#renderhookslinkuseembedded
+[duplication of shared page resources]: /configuration/markup/#duplicateresourcefiles
+[embedded image render hook]: /render-hooks/images/#embedded
+[embedded link render hook]: /render-hooks/links/#embedded
+[page bundles]: /content-management/page-bundles/

@@ -1,50 +1,62 @@
 ---
-title: Editor Plug-ins for Hugo
-linktitle: Editor Plug-ins
-description: The Hugo community uses a wide range of preferred tools and has developed plug-ins for some of the most popular text editors to help automate parts of your workflow.
-date: 2017-02-01
-publishdate: 2017-02-01
-lastmod: 2017-02-01
-categories: [developer tools]
-keywords: [editor, plug-ins]
-menu:
-  docs:
-    parent: "tools"
-    weight: 50
-weight: 50
-sections_weight: 50
-draft: false
-aliases: []
-toc: false
+title: Editor plugins
+description: The Hugo community uses a wide range of tools and has developed plugins for some of the most popular text editors to help automate parts of your workflow.
+categories: []
+keywords: []
+weight: 10
 ---
-
-The Hugo community uses a wide range of preferred tools and has developed plug-ins for some of the most popular text editors to help automate parts of your workflow.
-
-## Sublime Text
-
-* [Hugofy](https://github.com/akmittal/Hugofy). Hugofy is a plugin for Sublime Text 3 to make life easier to use Hugo static site generator.
-* [Hugo Snippets](https://packagecontrol.io/packages/Hugo%20Snippets). Hugo Snippets is a useful plugin for adding automatic snippets to Sublime Text 3.
 
 ## Visual Studio Code
 
-* [Hugofy](https://marketplace.visualstudio.com/items?itemName=akmittal.hugofy). Hugofy is a plugin for Visual Studio Code to "make life easier" when developing with Hugo. The source code can be found [here](https://github.com/akmittal/hugofy-vscode).
-* [Hugo Helper](https://marketplace.visualstudio.com/items?itemName=rusnasonov.vscode-hugo). Hugo Helper is a plugin for Visual Studio Code that has some useful commands for Hugo. The source code can be found [here](https://github.com/rusnasonov/vscode-hugo).
-* [Hugo Language and Syntax Support](https://marketplace.visualstudio.com/items?itemName=budparr.language-hugo-vscode). Hugo Language and Syntax Support is a Visual Studio Code plugin for Hugo syntax highlighting and snippets. The source code can be found [here](https://github.com/budparr/language-hugo-vscode).
-* [Hugo Themer](https://marketplace.visualstudio.com/items?itemName=eliostruyf.vscode-hugo-themer). Hugo Themer is an extension to help you while developing themes. It allows you to easily navigate through your theme files.
-* [Front Matter](https://marketplace.visualstudio.com/items?itemName=eliostruyf.vscode-front-matter). Once you go for a static site, you need to think about how you are going to manage your articles. Front matter is a tool that helps you maintaining the metadata/front matter of your articles like: creation date, modified date, slug, tile, SEO check, and many more...
+[gotmplfmt](https://marketplace.visualstudio.com/items?itemName=GoHugoIO.gotmplfmt)
+: Developed and maintained by the Hugo authors, this extension formats [templates](g) using the [gotmplfmt](https://github.com/gohugoio/gotmplfmt) CLI.
+
+[Front Matter](https://marketplace.visualstudio.com/items?itemName=eliostruyf.vscode-front-matter)
+: This extension maintains article metadata such as creation date, modified date, slug, title, SEO check, and more.
+
+[Hugo Helper](https://marketplace.visualstudio.com/items?itemName=rusnasonov.vscode-hugo)
+: This extension provides some useful commands. The source code is available on its [GitHub repository](https://github.com/rusnasonov/vscode-hugo).
+
+[Hugo Language and Syntax Support](https://marketplace.visualstudio.com/items?itemName=budparr.language-hugo-vscode)
+: This extension provides syntax highlighting and snippets. The source code is available on its [GitHub repository](https://github.com/budparr/language-hugo-vscode).
+
+[Hugo Shortcodes](https://marketplace.visualstudio.com/items?itemName=thuliteio.hugo-shortcodes)
+: This extension adds syntax highlighting and intelligent completions for shortcodes in Markdown, including shortcode names and arguments discovered from workspace templates. The source code is available on its [GitHub repository](https://github.com/thuliteio/hugo-shortcodes).
+
+[Hugo Themer](https://marketplace.visualstudio.com/items?itemName=eliostruyf.vscode-hugo-themer)
+: This extension simplifies theme development, making it easy to navigate theme files.
+
+[Hugofy](https://marketplace.visualstudio.com/items?itemName=akmittal.hugofy)
+: This extension streamlines project development. The source code is available on its [GitHub repository](https://github.com/akmittal/hugofy-vscode).
+
+[Syntax Highlighting for Hugo Shortcodes](https://marketplace.visualstudio.com/items?itemName=kaellarkin.hugo-shortcode-syntax)
+: This extension adds syntax highlighting for [shortcodes](g), making visual identification of individual pieces easier.
+
+## JetBrains IDEs
+
+[Smart Hugo](https://smarthugo.dev)
+: This plugin for IntelliJ IDEA, WebStorm, PhpStorm, and other JetBrains IDEs adds template support including syntax highlighting, actions completion, code formatting, and optional advanced features.
 
 ## Emacs
 
-* [emacs-easy-hugo](https://github.com/masasam/emacs-easy-hugo). Emacs major mode for managing hugo blogs. Note that Hugo also supports [Org-mode][formats].
-* [ox-hugo.el](https://ox-hugo.scripter.co). Native Org-mode exporter that exports to Blackfriday Markdown with Hugo front-matter. `ox-hugo` supports two common Org blogging flows --- exporting multiple Org sub-trees in a single file to multiple Hugo posts, and exporting a single Org file to a single Hugo post. It also leverages the Org tag and property inheritance features. See [*Why ox-hugo?*](https://ox-hugo.scripter.co/doc/why-ox-hugo/) for more.
+[emacs-easy-hugo](https://github.com/masasam/emacs-easy-hugo)
+: This major Emacs mode supports writing blogs using various markup formats, including Markdown, Org mode, AsciiDoc, reStructuredText, mmark, and HTML.
+
+[ox-hugo.el](https://ox-hugo.scripter.co)
+: This native Org mode exporter exports to Blackfriday Markdown with [front-matter](g). It supports two common Org blogging flows: exporting multiple Org subtrees in a single file to multiple posts, and exporting a single Org file to a single post. It also leverages the Org tag and property inheritance features. See [Why ox-hugo?](https://ox-hugo.scripter.co/doc/why-ox-hugo/) for more.
+
+## Sublime Text
+
+[Hugo Snippets](https://packagecontrol.io/packages/Hugo%20Snippets)
+: This plugin adds automatic snippets.
+
+[Hugofy](https://github.com/akmittal/Hugofy)
+: This plugin streamlines project development.
 
 ## Vim
 
-* [Vim Hugo Helper](https://github.com/robertbasic/vim-hugo-helper). A small Vim plugin to help me with writing posts with Hugo.
+[Vim Hugo Helper](https://github.com/robertbasic/vim-hugo-helper)
+: This plugin facilitates authoring pages and blog posts.
 
-## Atom
-
-* [Hugofy](https://atom.io/packages/hugofy). A Hugo Static Website Generator package for Atom.
-* [language-hugo](https://atom.io/packages/language-hugo). Adds syntax highlighting to Hugo files.
-
-[formats]: /content-management/formats/
+[vim-hugo](https://github.com/phelipetls/vim-hugo)
+: This plugin provides syntax highlighting for templates and a few other features.

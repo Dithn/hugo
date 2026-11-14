@@ -18,36 +18,34 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/gohugoio/hugo/common/collections"
+	"github.com/gohugoio/hugo/common/hashing"
+	"github.com/gohugoio/hugo/common/herrors"
 	"github.com/gohugoio/hugo/common/hexec"
+	"github.com/gohugoio/hugo/common/hstrings"
+	"github.com/gohugoio/hugo/common/hugio"
+	"github.com/gohugoio/hugo/common/loggers"
+	"github.com/gohugoio/hugo/config"
 
-	hglob "github.com/gohugoio/hugo/hugofs/glob"
-
-	"github.com/gobwas/glob"
+	hglob "github.com/gohugoio/hugo/hugofs/hglob"
 
 	"github.com/gohugoio/hugo/hugofs"
 
 	"github.com/gohugoio/hugo/hugofs/files"
 
-	"github.com/gohugoio/hugo/common/loggers"
+	"golang.org/x/mod/module"
 
-	"github.com/gohugoio/hugo/config"
-
-	"github.com/rogpeppe/go-internal/module"
-
-	"github.com/gohugoio/hugo/common/hugio"
-
-	"github.com/pkg/errors"
 	"github.com/spf13/afero"
 )
 
@@ -65,6 +63,10 @@ const vendord = "_vendor"
 const (
 	goModFilename = "go.mod"
 	goSumFilename = "go.sum"
+
+	// Checksum file for direct dependencies only,
+	// that is, module imports with version set.
+	hugoDirectSumFilename = "hugo.direct.sum"
 )
 
 // NewClient creates a new Client that can be used to manage the Hugo Components
@@ -80,26 +82,12 @@ func NewClient(cfg ClientConfig) *Client {
 		goModFilename = n
 	}
 
-	var env []string
-	mcfg := cfg.ModuleConfig
-
-	config.SetEnvVars(&env,
-		"PWD", cfg.WorkingDir,
-		"GO111MODULE", "on",
-		"GOPROXY", mcfg.Proxy,
-		"GOPRIVATE", mcfg.Private,
-		"GONOPROXY", mcfg.NoProxy,
-		"GOPATH", cfg.CacheDir,
-		// GOCACHE was introduced in Go 1.15. This matches the location derived from GOPATH above.
-		"GOCACHE", filepath.Join(cfg.CacheDir, "pkg", "mod"),
-	)
-
 	logger := cfg.Logger
 	if logger == nil {
-		logger = loggers.NewWarningLogger()
+		logger = loggers.NewDefault()
 	}
 
-	var noVendor glob.Glob
+	var noVendor hstrings.Matcher
 	if cfg.ModuleConfig.NoVendor != "" {
 		noVendor, _ = hglob.GetGlob(hglob.NormalizePath(cfg.ModuleConfig.NoVendor))
 	}
@@ -109,8 +97,8 @@ func NewClient(cfg ClientConfig) *Client {
 		ccfg:              cfg,
 		logger:            logger,
 		noVendor:          noVendor,
-		moduleConfig:      mcfg,
-		environ:           env,
+		moduleConfig:      cfg.ModuleConfig,
+		environ:           cfg.toEnv(),
 		GoModulesFilename: goModFilename,
 	}
 }
@@ -120,7 +108,7 @@ type Client struct {
 	fs     afero.Fs
 	logger loggers.Logger
 
-	noVendor glob.Glob
+	noVendor hstrings.Matcher
 
 	ccfg ClientConfig
 
@@ -141,7 +129,7 @@ type Client struct {
 	goBinaryStatus goBinaryStatus
 }
 
-// Graph writes a module dependenchy graph to the given writer.
+// Graph writes a module dependency graph to the given writer.
 func (c *Client) Graph(w io.Writer) error {
 	mc, coll := c.collect(true)
 	if coll.err != nil {
@@ -152,10 +140,6 @@ func (c *Client) Graph(w io.Writer) error {
 			continue
 		}
 
-		prefix := ""
-		if module.Disabled() {
-			prefix = "DISABLED "
-		}
 		dep := pathVersion(module.Owner()) + " " + pathVersion(module)
 		if replace := module.Replace(); replace != nil {
 			if replace.Version() != "" {
@@ -165,7 +149,7 @@ func (c *Client) Graph(w io.Writer) error {
 				dep += " => " + replace.Dir()
 			}
 		}
-		fmt.Fprintln(w, prefix+dep)
+		fmt.Fprintln(w, dep)
 	}
 
 	return nil
@@ -191,7 +175,8 @@ func (c *Client) Tidy() error {
 //
 // We, by default, use the /_vendor folder first, if found. To disable,
 // run with
-//    hugo --ignoreVendor
+//
+//	hugo --ignoreVendorPaths=".*"
 //
 // Given a module tree, Hugo will pick the first module for a given path,
 // meaning that if the top-level module is vendored, that will be the full
@@ -201,7 +186,7 @@ func (c *Client) Vendor() error {
 	if err := c.rmVendorDir(vendorDir); err != nil {
 		return err
 	}
-	if err := c.fs.MkdirAll(vendorDir, 0755); err != nil {
+	if err := c.fs.MkdirAll(vendorDir, 0o755); err != nil {
 		return err
 	}
 
@@ -227,7 +212,7 @@ func (c *Client) Vendor() error {
 			continue
 		}
 
-		if !c.shouldVendor(t.Path()) {
+		if c.shouldNotVendor(t.PathVersionQuery(false)) || c.shouldNotVendor(t.PathVersionQuery(true)) {
 			continue
 		}
 
@@ -240,34 +225,34 @@ func (c *Client) Vendor() error {
 		// See https://github.com/gohugoio/hugo/issues/8239
 		// This is an error situation. We need something to vendor.
 		if t.Mounts() == nil {
-			return errors.Errorf("cannot vendor module %q, need at least one mount", t.Path())
+			return fmt.Errorf("cannot vendor module %q, need at least one mount", t.PathVersionQuery(false))
 		}
 
-		fmt.Fprintln(&modulesContent, "# "+t.Path()+" "+t.Version())
+		fmt.Fprintln(&modulesContent, "# "+t.PathVersionQuery(true)+" "+t.Version())
 
 		dir := t.Dir()
 
 		for _, mount := range t.Mounts() {
 			sourceFilename := filepath.Join(dir, mount.Source)
-			targetFilename := filepath.Join(vendorDir, t.Path(), mount.Source)
+			targetFilename := filepath.Join(vendorDir, t.PathVersionQuery(true), mount.Source)
 			fi, err := c.fs.Stat(sourceFilename)
 			if err != nil {
-				return errors.Wrap(err, "failed to vendor module")
+				return fmt.Errorf("failed to vendor module: %w", err)
 			}
 
 			if fi.IsDir() {
 				if err := hugio.CopyDir(c.fs, sourceFilename, targetFilename, nil); err != nil {
-					return errors.Wrap(err, "failed to copy module to vendor dir")
+					return fmt.Errorf("failed to copy module to vendor dir: %w", err)
 				}
 			} else {
 				targetDir := filepath.Dir(targetFilename)
 
-				if err := c.fs.MkdirAll(targetDir, 0755); err != nil {
-					return errors.Wrap(err, "failed to make target dir")
+				if err := c.fs.MkdirAll(targetDir, 0o755); err != nil {
+					return fmt.Errorf("failed to make target dir: %w", err)
 				}
 
 				if err := hugio.CopyFile(c.fs, sourceFilename, targetFilename); err != nil {
-					return errors.Wrap(err, "failed to copy module file to vendor")
+					return fmt.Errorf("failed to copy module file to vendor: %w", err)
 				}
 			}
 		}
@@ -276,17 +261,28 @@ func (c *Client) Vendor() error {
 		resourcesDir := filepath.Join(dir, files.FolderResources)
 		_, err := c.fs.Stat(resourcesDir)
 		if err == nil {
-			if err := hugio.CopyDir(c.fs, resourcesDir, filepath.Join(vendorDir, t.Path(), files.FolderResources), nil); err != nil {
-				return errors.Wrap(err, "failed to copy resources to vendor dir")
+			if err := hugio.CopyDir(c.fs, resourcesDir, filepath.Join(vendorDir, t.PathVersionQuery(true), files.FolderResources), nil); err != nil {
+				return fmt.Errorf("failed to copy resources to vendor dir: %w", err)
 			}
 		}
 
-		// Also include any theme.toml or config.* files in the root.
+		// Include the config directory if present.
+		configDir := filepath.Join(dir, "config")
+		_, err = c.fs.Stat(configDir)
+		if err == nil {
+			if err := hugio.CopyDir(c.fs, configDir, filepath.Join(vendorDir, t.PathVersionQuery(true), "config"), nil); err != nil {
+				return fmt.Errorf("failed to copy config dir to vendor dir: %w", err)
+			}
+		}
+
+		// Also include any theme.toml or config.* or hugo.* files in the root.
 		configFiles, _ := afero.Glob(c.fs, filepath.Join(dir, "config.*"))
+		configFiles2, _ := afero.Glob(c.fs, filepath.Join(dir, "hugo.*"))
+		configFiles = append(configFiles, configFiles2...)
 		configFiles = append(configFiles, filepath.Join(dir, "theme.toml"))
 		for _, configFile := range configFiles {
-			if err := hugio.CopyFile(c.fs, configFile, filepath.Join(vendorDir, t.Path(), filepath.Base(configFile))); err != nil {
-				if !os.IsNotExist(err) {
+			if err := hugio.CopyFile(c.fs, configFile, filepath.Join(vendorDir, t.PathVersionQuery(true), filepath.Base(configFile))); err != nil {
+				if !herrors.IsNotExist(err) {
 					return err
 				}
 			}
@@ -294,7 +290,7 @@ func (c *Client) Vendor() error {
 	}
 
 	if modulesContent.Len() > 0 {
-		if err := afero.WriteFile(c.fs, filepath.Join(vendorDir, vendorModulesFilename), modulesContent.Bytes(), 0666); err != nil {
+		if err := afero.WriteFile(c.fs, filepath.Join(vendorDir, vendorModulesFilename), modulesContent.Bytes(), 0o666); err != nil {
 			return err
 		}
 	}
@@ -304,23 +300,47 @@ func (c *Client) Vendor() error {
 
 // Get runs "go get" with the supplied arguments.
 func (c *Client) Get(args ...string) error {
-	if len(args) == 0 || (len(args) == 1 && args[0] == "-u") {
+	if len(args) == 0 || (len(args) == 1 && strings.Contains(args[0], "-u")) {
 		update := len(args) != 0
+		patch := update && (args[0] == "-u=patch") //
 
 		// We need to be explicit about the modules to get.
-		for _, m := range c.moduleConfig.Imports {
-			if !isProbablyModule(m.Path) {
-				// Skip themes/components stored below /themes etc.
-				// There may be false positives in the above, but those
-				// should be rare, and they will fail below with an
-				// "cannot find module providing ..." message.
-				continue
+		var modules []string
+		// Update all active modules if the -u flag presents.
+		if update {
+			mc, coll := c.collect(true)
+			if coll.err != nil {
+				return coll.err
 			}
+			for _, m := range mc.AllModules {
+				if m.Owner() == nil || !isProbablyModule(m.Path()) {
+					continue
+				}
+				modules = append(modules, m.Path())
+			}
+		} else {
+			for _, m := range c.moduleConfig.Imports {
+				if !isProbablyModule(m.Path) {
+					// Skip themes/components stored below /themes etc.
+					// There may be false positives in the above, but those
+					// should be rare, and they will fail below with an
+					// "cannot find module providing ..." message.
+					continue
+				}
+				modules = append(modules, m.Path)
+			}
+		}
+
+		for _, m := range modules {
 			var args []string
-			if update {
+
+			if update && !patch {
 				args = append(args, "-u")
+			} else if update && patch {
+				args = append(args, "-u=patch")
 			}
-			args = append(args, m.Path)
+			args = append(args, m)
+
 			if err := c.get(args...); err != nil {
 				return err
 			}
@@ -333,20 +353,8 @@ func (c *Client) Get(args ...string) error {
 }
 
 func (c *Client) get(args ...string) error {
-	var hasD bool
-	for _, arg := range args {
-		if arg == "-d" {
-			hasD = true
-			break
-		}
-	}
-	if !hasD {
-		// go get without the -d flag does not make sense to us, as
-		// it will try to build and install go packages.
-		args = append([]string{"-d"}, args...)
-	}
-	if err := c.runGo(context.Background(), c.logger.Out(), append([]string{"get"}, args...)...); err != nil {
-		errors.Wrapf(err, "failed to get %q", args)
+	if err := c.runGo(context.Background(), c.logger.StdOut(), append([]string{"get"}, args...)...); err != nil {
+		return fmt.Errorf("failed to get %q: %w", args, err)
 	}
 	return nil
 }
@@ -355,9 +363,9 @@ func (c *Client) get(args ...string) error {
 // If path is empty, Go will try to guess.
 // If this succeeds, this project will be marked as Go Module.
 func (c *Client) Init(path string) error {
-	err := c.runGo(context.Background(), c.logger.Out(), "mod", "init", path)
+	err := c.runGo(context.Background(), c.logger.StdOut(), "mod", "init", path)
 	if err != nil {
-		return errors.Wrap(err, "failed to init modules")
+		return fmt.Errorf("failed to init modules: %w", err)
 	}
 
 	c.GoModulesFilename = filepath.Join(c.ccfg.WorkingDir, goModFilename)
@@ -376,14 +384,12 @@ func (c *Client) Verify(clean bool) error {
 	if err != nil {
 		if clean {
 			m := verifyErrorDirRe.FindAllStringSubmatch(err.Error(), -1)
-			if m != nil {
-				for i := 0; i < len(m); i++ {
-					c, err := hugofs.MakeReadableAndRemoveAllModulePkgDir(c.fs, m[i][1])
-					if err != nil {
-						return err
-					}
-					fmt.Println("Cleaned", c)
+			for i := range m {
+				c, err := hugofs.MakeReadableAndRemoveAllModulePkgDir(c.fs, m[i][1])
+				if err != nil {
+					return err
 				}
+				fmt.Println("Cleaned", c)
 			}
 			// Try to verify it again.
 			err = c.runVerify()
@@ -398,7 +404,7 @@ func (c *Client) Clean(pattern string) error {
 		return err
 	}
 
-	var g glob.Glob
+	var g hstrings.Matcher
 
 	if pattern != "" {
 		var err error
@@ -416,20 +422,78 @@ func (c *Client) Clean(pattern string) error {
 		if g != nil && !g.Match(m.Path) {
 			continue
 		}
-		_, err = hugofs.MakeReadableAndRemoveAllModulePkgDir(c.fs, m.Dir)
+		dirCount, err := hugofs.MakeReadableAndRemoveAllModulePkgDir(c.fs, m.Dir)
 		if err == nil {
-			c.logger.Printf("hugo: cleaned module cache for %q", m.Path)
+			c.logger.Printf("hugo: removed %d dirs in module cache for %q", dirCount, m.Path)
 		}
 	}
 	return err
 }
 
 func (c *Client) runVerify() error {
-	return c.runGo(context.Background(), ioutil.Discard, "mod", "verify")
+	return c.runGo(context.Background(), io.Discard, "mod", "verify")
 }
 
 func isProbablyModule(path string) bool {
 	return module.CheckPath(path) == nil
+}
+
+func (c *Client) downloadModuleVersion(path, version string) (*goModule, error) {
+	// If it's already cached, use it.
+	const keyPrefix = "downloadmoduleversion_"
+	cacheKey := keyPrefix + hashing.XxHashFromStringHexEncoded(c.ccfg.CacheDir, path, version) + ".json"
+	if b, _ := c.ccfg.ModuleQueriesCache.GetBytes(cacheKey); len(b) > 0 {
+		var cm goModule
+		if err := json.Unmarshal(b, &cm); err == nil && cm.Dir != "" {
+			if c.isDirNonEmpty(cm.Dir) {
+				return &cm, nil
+			}
+		}
+	}
+
+	// No valid cache, need to query.
+	args := []string{"mod", "download", "-json", fmt.Sprintf("%s@%s", path, version)}
+
+	b := &bytes.Buffer{}
+	err := c.runGo(context.Background(), b, args...)
+	if err != nil {
+		// The -json flag makes Go output error details as JSON to stdout
+		// even on failure. Try to extract the error message from the JSON output.
+		if jsonErr := extractGoModDownloadError(b.Bytes()); jsonErr != "" {
+			return nil, fmt.Errorf("failed to download module %s@%s: %s: %s", path, version, err, jsonErr)
+		}
+		return nil, fmt.Errorf("failed to download module %s@%s: %w", path, version, err)
+	}
+
+	jsonResult := b.Bytes()
+
+	m := &goModule{}
+	if err := json.NewDecoder(bytes.NewReader(jsonResult)).Decode(m); err != nil {
+		return nil, fmt.Errorf("failed to decode module download result: %w", err)
+	}
+
+	if m.Error != nil {
+		return nil, errors.New(m.Error.Err)
+	}
+
+	// Cache the successful result if it has a Dir field.
+	if m.Dir != "" {
+		_ = c.ccfg.ModuleQueriesCache.SetBytes(cacheKey, jsonResult)
+	}
+
+	return m, nil
+}
+
+// isDirNonEmpty returns true if dir exists and contains at least one file or subdirectory.
+func (c *Client) isDirNonEmpty(dir string) bool {
+	f, err := c.fs.Open(dir)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	// Read just one entry to check if directory is non-empty.
+	_, err = f.Readdirnames(1)
+	return err == nil
 }
 
 func (c *Client) listGoMods() (goModules, error) {
@@ -440,10 +504,10 @@ func (c *Client) listGoMods() (goModules, error) {
 	downloadModules := func(modules ...string) error {
 		args := []string{"mod", "download"}
 		args = append(args, modules...)
-		out := ioutil.Discard
+		out := io.Discard
 		err := c.runGo(context.Background(), out, args...)
 		if err != nil {
-			return errors.Wrap(err, "failed to download modules")
+			return fmt.Errorf("failed to download modules: %w", err)
 		}
 		return nil
 	}
@@ -462,7 +526,7 @@ func (c *Client) listGoMods() (goModules, error) {
 		}
 		err := c.runGo(context.Background(), b, args...)
 		if err != nil {
-			return errors.Wrap(err, "failed to list modules")
+			return fmt.Errorf("failed to list modules: %w", err)
 		}
 
 		dec := json.NewDecoder(b)
@@ -472,7 +536,7 @@ func (c *Client) listGoMods() (goModules, error) {
 				if err == io.EOF {
 					break
 				}
-				return errors.Wrap(err, "failed to decode modules list")
+				return fmt.Errorf("failed to decode modules list: %w", err)
 			}
 
 			if err := handle(m); err != nil {
@@ -499,6 +563,26 @@ func (c *Client) listGoMods() (goModules, error) {
 		if m.Dir == "" {
 			modulesToDownload = append(modulesToDownload, fmt.Sprintf("%s@%s", m.Path, m.Version))
 		}
+
+		// See https://github.com/golang/go/issues/67363
+		// Origin isn't always set.
+		if m.Origin == nil && m.GoMod != "" {
+			// There's sometimes an Info field with a JSON filename with this info, but that is also not always set.
+			// But we seem to always get the go.mod filename, so we can determine the info filename from that,
+			// just replace the .mod suffix with .info.
+			infoFilename := strings.TrimSuffix(m.GoMod, ".mod") + ".info"
+			// JSON on the form {"Version":"v0.0.0-20260225095909-668663b54d09","Time":"2026-02-25T09:59:09Z","Origin":{"VCS":"git","URL":"https://github.com/bep/hugo-mod-testing-content","Hash":"668663b54d0937df05185d144765d13c3ffda489"}}
+			if b, err := afero.ReadFile(c.fs, infoFilename); err == nil {
+				var info struct {
+					Version string
+					Time    time.Time
+					Origin  *goModuleOrigin
+				}
+				if err := json.Unmarshal(b, &info); err == nil {
+					m.Origin = info.Origin
+				}
+			}
+		}
 	}
 
 	if len(modulesToDownload) > 0 {
@@ -519,13 +603,93 @@ func (c *Client) listGoMods() (goModules, error) {
 	return modules, err
 }
 
+func (c *Client) writeHugoDirectSum(mods Modules) error {
+	if c.GoModulesFilename == "" {
+		return nil
+	}
+	var sums []modSum
+	for _, m := range mods {
+		if m.Owner() == nil {
+			// This is the project.
+			continue
+		}
+		if m.IsGoMod() && m.VersionQuery() != "" {
+			sums = append(sums, modSum{path: m.Path(), version: m.Version(), sum: m.Sum()})
+		}
+	}
+
+	// Read the existing sums.
+	existingSums, err := c.readModSumFile(hugoDirectSumFilename)
+	if err != nil {
+		return err
+	}
+	if len(sums) == 0 && len(existingSums) == 0 {
+		// Nothing to do.
+		return nil
+	}
+
+	dirty := len(sums) != len(existingSums)
+	for _, s1 := range sums {
+		if s2, ok := existingSums[s1.pathVersionKey]; ok {
+			if s1.sum != s2 {
+				return fmt.Errorf("verifying %s@%s: checksum mismatch: %s != %s", s1.path, s1.version, s1.sum, s2)
+			}
+		} else if !dirty {
+			dirty = true
+		}
+	}
+	if !dirty {
+		// Nothing changed.
+		return nil
+	}
+
+	// Write the sums file.
+	// First sort the sums for reproducible output.
+	sort.Slice(sums, func(i, j int) bool {
+		pvi, pvj := sums[i].pathVersionKey, sums[j].pathVersionKey
+		return pvi.path < pvj.path || (pvi.path == pvj.path && pvi.version < pvj.version)
+	})
+
+	f, err := c.fs.OpenFile(filepath.Join(c.ccfg.WorkingDir, hugoDirectSumFilename), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o666)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	for _, s := range sums {
+		fmt.Fprintf(f, "%s %s %s\n", s.pathVersionKey.path, s.pathVersionKey.version, s.sum)
+	}
+
+	return nil
+}
+
+func (c *Client) readModSumFile(filename string) (map[pathVersionKey]string, error) {
+	b, err := afero.ReadFile(c.fs, filepath.Join(c.ccfg.WorkingDir, filename))
+	if err != nil {
+		if herrors.IsNotExist(err) {
+			return make(map[pathVersionKey]string), nil
+		}
+		return nil, err
+	}
+	lines := bytes.Split(b, []byte{'\n'})
+	sums := make(map[pathVersionKey]string)
+	for _, line := range lines {
+		parts := bytes.Fields(line)
+		if len(parts) == 3 {
+			sums[pathVersionKey{path: string(parts[0]), version: string(parts[1])}] = string(parts[2])
+		}
+	}
+
+	return sums, nil
+}
+
 func (c *Client) rewriteGoMod(name string, isGoMod map[string]bool) error {
 	data, err := c.rewriteGoModRewrite(name, isGoMod)
 	if err != nil {
 		return err
 	}
 	if data != nil {
-		if err := afero.WriteFile(c.fs, filepath.Join(c.ccfg.WorkingDir, name), data, 0666); err != nil {
+		if err := afero.WriteFile(c.fs, filepath.Join(c.ccfg.WorkingDir, name), data, 0o666); err != nil {
 			return err
 		}
 	}
@@ -544,7 +708,7 @@ func (c *Client) rewriteGoModRewrite(name string, isGoMod map[string]bool) ([]by
 	b := &bytes.Buffer{}
 	f, err := c.fs.Open(filepath.Join(c.ccfg.WorkingDir, name))
 	if err != nil {
-		if os.IsNotExist(err) {
+		if herrors.IsNotExist(err) {
 			// It's been deleted.
 			return nil, nil
 		}
@@ -603,7 +767,8 @@ func (c *Client) rmVendorDir(vendorDir string) error {
 func (c *Client) runGo(
 	ctx context.Context,
 	stdout io.Writer,
-	args ...string) error {
+	args ...string,
+) error {
 	if c.goBinaryStatus != 0 {
 		return nil
 	}
@@ -612,7 +777,7 @@ func (c *Client) runGo(
 
 	argsv := collections.StringSliceToInterfaceSlice(args)
 	argsv = append(argsv, hexec.WithEnviron(c.environ))
-	argsv = append(argsv, hexec.WithStderr(io.MultiWriter(stderr, os.Stderr)))
+	argsv = append(argsv, hexec.WithStderr(goOutputReplacerWriter{w: io.MultiWriter(stderr, os.Stderr)}))
 	argsv = append(argsv, hexec.WithStdout(stdout))
 	argsv = append(argsv, hexec.WithDir(c.ccfg.WorkingDir))
 	argsv = append(argsv, hexec.WithContext(ctx))
@@ -642,7 +807,7 @@ If you then run 'hugo mod graph' it should resolve itself to the most recent ver
 
 		_, ok := err.(*exec.ExitError)
 		if !ok {
-			return errors.Errorf("failed to execute 'go %v': %s %T", args, err, err)
+			return fmt.Errorf("failed to execute 'go %v': %s %T", args, err, err)
 		}
 
 		// Too old Go version
@@ -651,11 +816,29 @@ If you then run 'hugo mod graph' it should resolve itself to the most recent ver
 			return nil
 		}
 
-		return errors.Errorf("go command failed: %s", stderr)
+		return fmt.Errorf("go command failed: %s", stderr)
 
 	}
 
 	return nil
+}
+
+var goOutputReplacer = strings.NewReplacer(
+	"go: to add module requirements and sums:", "hugo: to add module requirements and sums:",
+	"go mod tidy", "hugo mod tidy",
+)
+
+type goOutputReplacerWriter struct {
+	w io.Writer
+}
+
+func (w goOutputReplacerWriter) Write(p []byte) (n int, err error) {
+	s := goOutputReplacer.Replace(string(p))
+	_, err = w.w.Write([]byte(s))
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 func (c *Client) tidy(mods Modules, goModOnly bool) error {
@@ -686,12 +869,12 @@ func (c *Client) tidy(mods Modules, goModOnly bool) error {
 	return nil
 }
 
-func (c *Client) shouldVendor(path string) bool {
-	return c.noVendor == nil || !c.noVendor.Match(path)
+func (c *Client) shouldNotVendor(path string) bool {
+	return c.noVendor != nil && c.noVendor.Match(path)
 }
 
 func (c *Client) createThemeDirname(modulePath string, isProjectMod bool) (string, error) {
-	invalid := errors.Errorf("invalid module path %q; must be relative to themesDir when defined outside of the project", modulePath)
+	invalid := fmt.Errorf("invalid module path %q; must be relative to themesDir when defined outside of the project", modulePath)
 
 	modulePath = filepath.Clean(modulePath)
 	if filepath.IsAbs(modulePath) {
@@ -701,11 +884,10 @@ func (c *Client) createThemeDirname(modulePath string, isProjectMod bool) (strin
 		return "", invalid
 	}
 
-	moduleDir := filepath.Join(c.ccfg.ThemesDir, modulePath)
-	if !isProjectMod && !strings.HasPrefix(moduleDir, c.ccfg.ThemesDir) {
+	if !isProjectMod && !filepath.IsLocal(modulePath) {
 		return "", invalid
 	}
-	return moduleDir, nil
+	return filepath.Join(c.ccfg.ThemesDir, modulePath), nil
 }
 
 // ClientConfig configures the module Client.
@@ -719,7 +901,10 @@ type ClientConfig struct {
 
 	// Ignore any _vendor directory for module paths matching the given pattern.
 	// This can be nil.
-	IgnoreVendor glob.Glob
+	IgnoreVendor hstrings.Matcher
+
+	// Ignore any module not found errors.
+	IgnoreModuleDoesNotExist bool
 
 	// Absolute path to the project dir.
 	WorkingDir string
@@ -727,17 +912,59 @@ type ClientConfig struct {
 	// Absolute path to the project's themes dir.
 	ThemesDir string
 
+	// The publish dir.
+	PublishDir string
+
 	// Eg. "production"
 	Environment string
 
 	Exec *hexec.Exec
 
-	CacheDir     string // Module cache
-	ModuleConfig Config
+	CacheDir           string // Module cache
+	ModuleQueriesCache ModuleQueriesCache
+	ModuleConfig       Config
+}
+
+// ModuleQueriesCache is a cache for module version queries.
+type ModuleQueriesCache interface {
+	GetBytes(id string) ([]byte, error)
+	SetBytes(id string, data []byte) error
 }
 
 func (c ClientConfig) shouldIgnoreVendor(path string) bool {
 	return c.IgnoreVendor != nil && c.IgnoreVendor.Match(path)
+}
+
+func (cfg ClientConfig) toEnv() []string {
+	mcfg := cfg.ModuleConfig
+	var env []string
+	keyVals := []string{
+		"PWD", cfg.WorkingDir,
+		"GO111MODULE", "on",
+		"GOFLAGS", "-modcacherw",
+		"GOPATH", cfg.CacheDir,
+		"GOWORK", mcfg.Workspace, // Requires Go 1.18, see https://tip.golang.org/doc/go1.18
+		// GOCACHE was introduced in Go 1.15. This matches the location derived from GOPATH above.
+		"GOCACHE", filepath.Join(cfg.CacheDir, "pkg", "mod"),
+	}
+
+	if mcfg.Proxy != "" {
+		keyVals = append(keyVals, "GOPROXY", mcfg.Proxy)
+	}
+	if mcfg.Private != "" {
+		keyVals = append(keyVals, "GOPRIVATE", mcfg.Private)
+	}
+	if mcfg.NoProxy != "" {
+		keyVals = append(keyVals, "GONOPROXY", mcfg.NoProxy)
+	}
+	if mcfg.Auth != "" {
+		// GOAUTH was introduced in Go 1.24, see https://tip.golang.org/doc/go1.24.
+		keyVals = append(keyVals, "GOAUTH", mcfg.Auth)
+	}
+
+	config.SetEnvVars(&env, keyVals...)
+
+	return env
 }
 
 type goBinaryStatus int
@@ -749,18 +976,47 @@ type goModule struct {
 	Replace  *goModule      // replaced by this module
 	Time     *time.Time     // time version was created
 	Update   *goModule      // available update, if any (with -u)
+	Sum      string         // checksum
+	GoModSum string         // checksum for go.mod
 	Main     bool           // is this the main module?
 	Indirect bool           // is this module only an indirect dependency of main module?
 	Dir      string         // directory holding files for this module, if any
 	GoMod    string         // path to go.mod file for this module, if any
 	Error    *goModuleError // error loading module
+	Origin   *goModuleOrigin
+}
+
+type goModuleOrigin struct {
+	VCS    string // version control system, e.g. "git"
+	URL    string // repository URL, e.g. "https://github.com/bep/hugo-testing-git-versions"
+	Subdir string // subdirectory within the repo where the module lives, e.g. "site"
+	Hash   string // commit hash
+	TagSum string
+	Ref    string // e.g. "refs/tags/v3.0.1"
 }
 
 type goModuleError struct {
 	Err string // the error itself
 }
 
+func extractGoModDownloadError(b []byte) string {
+	// go mod download -json outputs Error as a plain string,
+	// unlike go list -m -json which uses {"Err": "..."}.
+	var m struct {
+		Error string
+	}
+	if err := json.Unmarshal(b, &m); err == nil && m.Error != "" {
+		return m.Error
+	}
+	return ""
+}
+
 type goModules []*goModule
+
+type modSum struct {
+	pathVersionKey
+	sum string
+}
 
 func (modules goModules) GetByPath(p string) *goModule {
 	if modules == nil {
@@ -788,18 +1044,32 @@ func (modules goModules) GetMain() *goModule {
 
 func getModlineSplitter(isGoMod bool) func(line string) []string {
 	if isGoMod {
+		var inRequireBlock bool
 		return func(line string) []string {
 			if strings.HasPrefix(line, "require (") {
+				inRequireBlock = true
 				return nil
 			}
-			if !strings.HasPrefix(line, "require") && !strings.HasPrefix(line, "\t") {
+			if inRequireBlock {
+				if strings.HasPrefix(line, ")") {
+					inRequireBlock = false
+					return nil
+				}
+				if !strings.HasPrefix(line, "\t") {
+					return nil
+				}
+			} else if !strings.HasPrefix(line, "require ") {
 				return nil
 			}
 			line = strings.TrimPrefix(line, "require")
 			line = strings.TrimSpace(line)
 			line = strings.TrimSuffix(line, "// indirect")
 
-			return strings.Fields(line)
+			parts := strings.Fields(line)
+			if len(parts) < 2 {
+				return nil
+			}
+			return parts
 		}
 	}
 

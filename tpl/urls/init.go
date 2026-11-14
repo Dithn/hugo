@@ -14,6 +14,8 @@
 package urls
 
 import (
+	"context"
+
 	"github.com/gohugoio/hugo/deps"
 	"github.com/gohugoio/hugo/tpl/internal"
 )
@@ -26,36 +28,16 @@ func init() {
 
 		ns := &internal.TemplateFuncsNamespace{
 			Name:    name,
-			Context: func(args ...interface{}) (interface{}, error) { return ctx, nil },
+			Context: func(cctx context.Context, args ...any) (any, error) { return ctx, nil },
 		}
-
-		ns.AddMethodMapping(ctx.AbsURL,
-			[]string{"absURL"},
-			[][2]string{},
-		)
 
 		ns.AddMethodMapping(ctx.AbsLangURL,
 			[]string{"absLangURL"},
 			[][2]string{},
 		)
-		ns.AddMethodMapping(ctx.Ref,
-			[]string{"ref"},
-			[][2]string{},
-		)
-		ns.AddMethodMapping(ctx.RelURL,
-			[]string{"relURL"},
-			[][2]string{},
-		)
-		ns.AddMethodMapping(ctx.RelLangURL,
-			[]string{"relLangURL"},
-			[][2]string{},
-		)
-		ns.AddMethodMapping(ctx.RelRef,
-			[]string{"relref"},
-			[][2]string{},
-		)
-		ns.AddMethodMapping(ctx.URLize,
-			[]string{"urlize"},
+
+		ns.AddMethodMapping(ctx.AbsURL,
+			[]string{"absURL"},
 			[][2]string{},
 		)
 
@@ -64,6 +46,54 @@ func init() {
 			[][2]string{
 				{`{{ "This is a title" | anchorize }}`, `this-is-a-title`},
 			},
+		)
+
+		ns.AddMethodMapping(ctx.JoinPath,
+			nil,
+			[][2]string{
+				{`{{ urls.JoinPath "https://example.org" "foo" }}`, `https://example.org/foo`},
+				{`{{ urls.JoinPath (slice "a" "b") }}`, `a/b`},
+			},
+		)
+
+		ns.AddMethodMapping(ctx.Parse,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.PathEscape,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.PathUnescape,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.Ref,
+			[]string{"ref"},
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.RelLangURL,
+			[]string{"relLangURL"},
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.RelRef,
+			[]string{"relref"},
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.RelURL,
+			[]string{"relURL"},
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.URLize,
+			[]string{"urlize"},
+			[][2]string{},
 		)
 
 		return ns

@@ -25,9 +25,9 @@ func TestFindRE(t *testing.T) {
 
 	for _, test := range []struct {
 		expr    string
-		content interface{}
-		limit   interface{}
-		expect  interface{}
+		content any
+		limit   any
+		expect  any
 	}{
 		{"[G|g]o", "Hugo is a static site generator written in Go.", 2, []string{"go", "Go"}},
 		{"[G|g]o", "Hugo is a static site generator written in Go.", -1, []string{"go", "Go"}},
@@ -50,21 +50,60 @@ func TestFindRE(t *testing.T) {
 	}
 }
 
+func TestFindRESubmatch(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+
+	for _, test := range []struct {
+		expr    string
+		content any
+		limit   any
+		expect  any
+	}{
+		{`<a\s*href="(.+?)">(.+?)</a>`, `<li><a href="#foo">Foo</a></li><li><a href="#bar">Bar</a></li>`, -1, [][]string{
+			{"<a href=\"#foo\">Foo</a>", "#foo", "Foo"},
+			{"<a href=\"#bar\">Bar</a>", "#bar", "Bar"},
+		}},
+		// Some simple cases.
+		{"([G|g]o)", "Hugo is a static site generator written in Go.", -1, [][]string{{"go", "go"}, {"Go", "Go"}}},
+		{"([G|g]o)", "Hugo is a static site generator written in Go.", 1, [][]string{{"go", "go"}}},
+
+		// errors
+		{"([G|go", "Hugo is a static site generator written in Go.", nil, false},
+		{"([G|g]o)", t, nil, false},
+	} {
+		result, err := ns.FindRESubmatch(test.expr, test.content, test.limit)
+
+		if b, ok := test.expect.(bool); ok && !b {
+			c.Assert(err, qt.Not(qt.IsNil))
+			continue
+		}
+
+		c.Assert(err, qt.IsNil)
+		c.Check(result, qt.DeepEquals, test.expect)
+	}
+}
+
 func TestReplaceRE(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		pattern interface{}
-		repl    interface{}
-		s       interface{}
-		n       []interface{}
-		expect  interface{}
+		pattern any
+		repl    any
+		s       any
+		n       []any
+		expect  any
 	}{
 		{"^https?://([^/]+).*", "$1", "http://gohugo.io/docs", nil, "gohugo.io"},
 		{"^https?://([^/]+).*", "$2", "http://gohugo.io/docs", nil, ""},
 		{"(ab)", "AB", "aabbaab", nil, "aABbaAB"},
-		{"(ab)", "AB", "aabbaab", []interface{}{1}, "aABbaab"},
+		{"(ab)", "AB", "aabbaab", []any{1}, "aABbaab"},
+		// A zero-width assertion needs the surrounding text to match.
+		{`\Bcd`, "-", "abcdef", nil, "ab-ef"},
+		{`\b`, "|", "foo bar", nil, "|foo| |bar|"},
+		{`\Bb`, "X", "foobar bar bab", nil, "fooXar bar baX"},
+		{`\Bb`, "X", "foobar bar bab", []any{1}, "fooXar bar bab"},
 		// errors
 		{"(ab", "AB", "aabb", nil, false}, // invalid re
 		{tstNoStringer{}, "$2", "http://gohugo.io/docs", nil, false},

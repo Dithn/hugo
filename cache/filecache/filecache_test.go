@@ -1,4 +1,4 @@
-// Copyright 2018 The Hugo Authors. All rights reserved.
+// Copyright 2024 The Hugo Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,27 +11,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package filecache
+package filecache_test
 
 import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/gobwas/glob"
+	"github.com/gohugoio/hugo/htesting"
 
-	"github.com/gohugoio/hugo/langs"
-	"github.com/gohugoio/hugo/modules"
-
+	"github.com/gohugoio/hugo/cache/filecache"
 	"github.com/gohugoio/hugo/common/hugio"
 	"github.com/gohugoio/hugo/config"
+	"github.com/gohugoio/hugo/config/testconfig"
 	"github.com/gohugoio/hugo/helpers"
 
 	"github.com/gohugoio/hugo/hugofs"
@@ -44,13 +40,8 @@ func TestFileCache(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	tempWorkingDir, err := ioutil.TempDir("", "hugo_filecache_test_work")
-	c.Assert(err, qt.IsNil)
-	defer os.Remove(tempWorkingDir)
-
-	tempCacheDir, err := ioutil.TempDir("", "hugo_filecache_test_cache")
-	c.Assert(err, qt.IsNil)
-	defer os.Remove(tempCacheDir)
+	tempWorkingDir := t.TempDir()
+	tempCacheDir := t.TempDir()
 
 	osfs := afero.NewOsFs()
 
@@ -75,7 +66,7 @@ assetDir = "assets"
 archeTypedir = "archetypes"
 
 [caches]
-[caches.getJSON]
+[caches.misc]
 maxAge = "10h"
 dir = ":cacheDir/c"
 
@@ -89,32 +80,17 @@ dir = ":cacheDir/c"
 		configStr = strings.Replace(configStr, "\\", winPathSep, -1)
 
 		p := newPathsSpec(t, osfs, configStr)
+		fileCachConfig := p.Cfg.GetConfigSection("caches").(filecache.Configs)
 
-		caches, err := NewCaches(p)
+		caches, err := filecache.NewCaches(fileCachConfig, p.Fs.Source)
 		c.Assert(err, qt.IsNil)
+		caches.SetResourceFs(p.SourceFs)
 
-		cache := caches.Get("GetJSON")
+		cache := caches.Get("Misc")
 		c.Assert(cache, qt.Not(qt.IsNil))
-		c.Assert(cache.maxAge.String(), qt.Equals, "10h0m0s")
-
-		bfs, ok := cache.Fs.(*afero.BasePathFs)
-		c.Assert(ok, qt.Equals, true)
-		filename, err := bfs.RealPath("key")
-		c.Assert(err, qt.IsNil)
-		if test.cacheDir != "" {
-			c.Assert(filename, qt.Equals, filepath.Join(test.cacheDir, "c/"+filecacheRootDirname+"/getjson/key"))
-		} else {
-			// Temp dir.
-			c.Assert(filename, qt.Matches, ".*hugo_cache.*"+filecacheRootDirname+".*key")
-		}
 
 		cache = caches.Get("Images")
 		c.Assert(cache, qt.Not(qt.IsNil))
-		c.Assert(cache.maxAge, qt.Equals, time.Duration(-1))
-		bfs, ok = cache.Fs.(*afero.BasePathFs)
-		c.Assert(ok, qt.Equals, true)
-		filename, _ = bfs.RealPath("key")
-		c.Assert(filename, qt.Equals, filepath.FromSlash("_gen/images/key"))
 
 		rf := func(s string) func() (io.ReadCloser, error) {
 			return func() (io.ReadCloser, error) {
@@ -123,7 +99,7 @@ dir = ":cacheDir/c"
 					io.Closer
 				}{
 					strings.NewReader(s),
-					ioutil.NopCloser(nil),
+					io.NopCloser(nil),
 				}, nil
 			}
 		}
@@ -132,13 +108,13 @@ dir = ":cacheDir/c"
 			return []byte("bcd"), nil
 		}
 
-		for _, ca := range []*Cache{caches.ImageCache(), caches.AssetsCache(), caches.GetJSONCache(), caches.GetCSVCache()} {
-			for i := 0; i < 2; i++ {
+		for _, ca := range []*filecache.Cache{caches.ImageCache(), caches.AssetsCache()} {
+			for range 2 {
 				info, r, err := ca.GetOrCreate("a", rf("abc"))
 				c.Assert(err, qt.IsNil)
 				c.Assert(r, qt.Not(qt.IsNil))
 				c.Assert(info.Name, qt.Equals, "a")
-				b, _ := ioutil.ReadAll(r)
+				b, _ := io.ReadAll(r)
 				r.Close()
 				c.Assert(string(b), qt.Equals, "abc")
 
@@ -154,30 +130,28 @@ dir = ":cacheDir/c"
 
 				_, r, err = ca.GetOrCreate("a", rf("bcd"))
 				c.Assert(err, qt.IsNil)
-				b, _ = ioutil.ReadAll(r)
+				b, _ = io.ReadAll(r)
 				r.Close()
 				c.Assert(string(b), qt.Equals, "abc")
 			}
 		}
-
-		c.Assert(caches.Get("getJSON"), qt.Not(qt.IsNil))
 
 		info, w, err := caches.ImageCache().WriteCloser("mykey")
 		c.Assert(err, qt.IsNil)
 		c.Assert(info.Name, qt.Equals, "mykey")
 		io.WriteString(w, "Hugo is great!")
 		w.Close()
-		c.Assert(caches.ImageCache().getString("mykey"), qt.Equals, "Hugo is great!")
+		c.Assert(caches.ImageCache().GetString("mykey"), qt.Equals, "Hugo is great!")
 
 		info, r, err := caches.ImageCache().Get("mykey")
 		c.Assert(err, qt.IsNil)
 		c.Assert(r, qt.Not(qt.IsNil))
 		c.Assert(info.Name, qt.Equals, "mykey")
-		b, _ := ioutil.ReadAll(r)
+		b, _ := io.ReadAll(r)
 		r.Close()
 		c.Assert(string(b), qt.Equals, "Hugo is great!")
 
-		info, b, err = caches.ImageCache().GetBytes("mykey")
+		info, b, err = caches.ImageCache().GetItemBytes("mykey")
 		c.Assert(err, qt.IsNil)
 		c.Assert(info.Name, qt.Equals, "mykey")
 		c.Assert(string(b), qt.Equals, "Hugo is great!")
@@ -186,6 +160,7 @@ dir = ":cacheDir/c"
 }
 
 func TestFileCacheConcurrent(t *testing.T) {
+	htesting.SkipSlowTestUnlessCI(t)
 	t.Parallel()
 
 	c := qt.New(t)
@@ -200,18 +175,19 @@ assetDir = "assets"
 archeTypedir = "archetypes"
 
 [caches]
-[caches.getjson]
+[caches.misc]
 maxAge = "1s"
 dir = "/cache/c"
 
 `
 
 	p := newPathsSpec(t, afero.NewMemMapFs(), configStr)
-
-	caches, err := NewCaches(p)
+	fileCachConfig := p.Cfg.GetConfigSection("caches").(filecache.Configs)
+	caches, err := filecache.NewCaches(fileCachConfig, p.Fs.Source)
 	c.Assert(err, qt.IsNil)
+	caches.SetResourceFs(p.Fs.Source)
 
-	const cacheName = "getjson"
+	const cacheName = "misc"
 
 	filenameData := func(i int) (string, string) {
 		data := fmt.Sprintf("data: %d", i)
@@ -221,11 +197,11 @@ dir = "/cache/c"
 
 	var wg sync.WaitGroup
 
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			for j := 0; j < 20; j++ {
+			for range 20 {
 				ca := caches.Get(cacheName)
 				c.Assert(ca, qt.Not(qt.IsNil))
 				filename, data := filenameData(i)
@@ -233,7 +209,7 @@ dir = "/cache/c"
 					return hugio.ToReadCloser(strings.NewReader(data)), nil
 				})
 				c.Assert(err, qt.IsNil)
-				b, _ := ioutil.ReadAll(r)
+				b, _ := io.ReadAll(r)
 				r.Close()
 				c.Assert(string(b), qt.Equals, data)
 				// Trigger some expiration.
@@ -251,24 +227,24 @@ func TestFileCacheReadOrCreateErrorInRead(t *testing.T) {
 
 	var result string
 
-	rf := func(failLevel int) func(info ItemInfo, r io.ReadSeeker) error {
-		return func(info ItemInfo, r io.ReadSeeker) error {
+	rf := func(failLevel int) func(info filecache.ItemInfo, r io.ReadSeeker) error {
+		return func(info filecache.ItemInfo, r io.ReadSeeker) error {
 			if failLevel > 0 {
 				if failLevel > 1 {
-					return ErrFatal
+					return filecache.ErrFatal
 				}
 				return errors.New("fail")
 			}
 
-			b, _ := ioutil.ReadAll(r)
+			b, _ := io.ReadAll(r)
 			result = string(b)
 
 			return nil
 		}
 	}
 
-	bf := func(s string) func(info ItemInfo, w io.WriteCloser) error {
-		return func(info ItemInfo, w io.WriteCloser) error {
+	bf := func(s string) func(info filecache.ItemInfo, w io.WriteCloser) error {
+		return func(info filecache.ItemInfo, w io.WriteCloser) error {
 			defer w.Close()
 			result = s
 			_, err := w.Write([]byte(s))
@@ -276,7 +252,12 @@ func TestFileCacheReadOrCreateErrorInRead(t *testing.T) {
 		}
 	}
 
-	cache := NewCache(afero.NewMemMapFs(), 100*time.Hour, "")
+	cfg := filecache.FileCacheConfig{
+		MaxAge: 100 * time.Hour,
+		Dir:    "cache/c",
+	}
+
+	cache := filecache.NewCache(afero.NewMemMapFs(), cfg)
 
 	const id = "a32"
 
@@ -290,59 +271,54 @@ func TestFileCacheReadOrCreateErrorInRead(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(result, qt.Equals, "v3")
 	_, err = cache.ReadOrCreate(id, rf(2), bf("v3"))
-	c.Assert(err, qt.Equals, ErrFatal)
-}
-
-func TestCleanID(t *testing.T) {
-	c := qt.New(t)
-	c.Assert(cleanID(filepath.FromSlash("/a/b//c.txt")), qt.Equals, filepath.FromSlash("a/b/c.txt"))
-	c.Assert(cleanID(filepath.FromSlash("a/b//c.txt")), qt.Equals, filepath.FromSlash("a/b/c.txt"))
-}
-
-func initConfig(fs afero.Fs, cfg config.Provider) error {
-	if _, err := langs.LoadLanguageSettings(cfg, nil); err != nil {
-		return err
-	}
-
-	modConfig, err := modules.DecodeConfig(cfg)
-	if err != nil {
-		return err
-	}
-
-	workingDir := cfg.GetString("workingDir")
-	themesDir := cfg.GetString("themesDir")
-	if !filepath.IsAbs(themesDir) {
-		themesDir = filepath.Join(workingDir, themesDir)
-	}
-	globAll := glob.MustCompile("**", '/')
-	modulesClient := modules.NewClient(modules.ClientConfig{
-		Fs:           fs,
-		WorkingDir:   workingDir,
-		ThemesDir:    themesDir,
-		ModuleConfig: modConfig,
-		IgnoreVendor: globAll,
-	})
-
-	moduleConfig, err := modulesClient.Collect()
-	if err != nil {
-		return err
-	}
-
-	if err := modules.ApplyProjectConfigDefaults(cfg, moduleConfig.ActiveModules[len(moduleConfig.ActiveModules)-1]); err != nil {
-		return err
-	}
-
-	cfg.Set("allModules", moduleConfig.ActiveModules)
-
-	return nil
+	c.Assert(err, qt.Equals, filecache.ErrFatal)
 }
 
 func newPathsSpec(t *testing.T, fs afero.Fs, configStr string) *helpers.PathSpec {
 	c := qt.New(t)
 	cfg, err := config.FromConfigString(configStr, "toml")
 	c.Assert(err, qt.IsNil)
-	initConfig(fs, cfg)
-	p, err := helpers.NewPathSpec(hugofs.NewFrom(fs, cfg), cfg, nil)
+	acfg := testconfig.GetTestConfig(fs, cfg)
+	p, err := helpers.NewPathSpec(hugofs.NewFrom(fs, acfg.BaseConfig()), acfg, nil, nil)
 	c.Assert(err, qt.IsNil)
 	return p
+}
+
+// A failed create must not leave a (partial) entry behind that
+// would be read as valid on the next call. See issue 15522.
+func TestFileCacheReadOrCreateErrorInCreate(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+
+	cache := filecache.NewCache(afero.NewMemMapFs(), filecache.FileCacheConfig{
+		MaxAge: 100 * time.Hour,
+		Dir:    "cache/c",
+	})
+
+	const id = "a32"
+
+	var reads int
+	read := func(info filecache.ItemInfo, r io.ReadSeeker) error {
+		reads++
+		return nil
+	}
+	createErr := errors.New("create failed")
+
+	_, err := cache.ReadOrCreate(id, read, func(info filecache.ItemInfo, w io.WriteCloser) error {
+		defer w.Close()
+		w.Write([]byte("partial"))
+		return createErr
+	})
+	c.Assert(err, qt.Equals, createErr)
+
+	var created bool
+	_, err = cache.ReadOrCreate(id, read, func(info filecache.ItemInfo, w io.WriteCloser) error {
+		defer w.Close()
+		created = true
+		_, err := w.Write([]byte("v1"))
+		return err
+	})
+	c.Assert(err, qt.IsNil)
+	c.Assert(reads, qt.Equals, 0)
+	c.Assert(created, qt.IsTrue)
 }

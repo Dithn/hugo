@@ -23,38 +23,28 @@ import (
 	"github.com/spf13/afero"
 )
 
+func TestIsOsFs(t *testing.T) {
+	c := qt.New(t)
+
+	c.Assert(IsOsFs(Os), qt.Equals, true)
+	c.Assert(IsOsFs(&afero.MemMapFs{}), qt.Equals, false)
+	c.Assert(IsOsFs(NewBasePathFs(&afero.MemMapFs{}, "/public")), qt.Equals, false)
+	c.Assert(IsOsFs(NewBasePathFs(Os, t.TempDir())), qt.Equals, true)
+}
+
 func TestNewDefault(t *testing.T) {
 	c := qt.New(t)
 	v := config.New()
+	v.Set("workingDir", t.TempDir())
+	v.Set("publishDir", "public")
 	f := NewDefault(v)
 
-	c.Assert(f.Source, qt.Not(qt.IsNil))
+	c.Assert(f.Source, qt.IsNotNil)
 	c.Assert(f.Source, hqt.IsSameType, new(afero.OsFs))
-	c.Assert(f.Os, qt.Not(qt.IsNil))
-	c.Assert(f.WorkingDir, qt.IsNil)
-}
-
-func TestNewMem(t *testing.T) {
-	c := qt.New(t)
-	v := config.New()
-	f := NewMem(v)
-
-	c.Assert(f.Source, qt.Not(qt.IsNil))
-	c.Assert(f.Source, hqt.IsSameType, new(afero.MemMapFs))
-	c.Assert(f.Destination, qt.Not(qt.IsNil))
-	c.Assert(f.Destination, hqt.IsSameType, new(afero.MemMapFs))
-	c.Assert(f.Os, hqt.IsSameType, new(afero.OsFs))
-	c.Assert(f.WorkingDir, qt.IsNil)
-}
-
-func TestWorkingDir(t *testing.T) {
-	c := qt.New(t)
-	v := config.New()
-
-	v.Set("workingDir", "/a/b/")
-
-	f := NewMem(v)
-
-	c.Assert(f.WorkingDir, qt.Not(qt.IsNil))
-	c.Assert(f.WorkingDir, hqt.IsSameType, new(afero.BasePathFs))
+	c.Assert(f.Os, qt.IsNotNil)
+	c.Assert(f.WorkingDirReadOnly, qt.IsNotNil)
+	c.Assert(IsOsFs(f.WorkingDirReadOnly), qt.IsTrue)
+	c.Assert(IsOsFs(f.Source), qt.IsTrue)
+	c.Assert(IsOsFs(f.PublishDir), qt.IsTrue)
+	c.Assert(IsOsFs(f.Os), qt.IsTrue)
 }

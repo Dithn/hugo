@@ -1,4 +1,4 @@
-// Copyright 2019 The Hugo Authors. All rights reserved.
+// Copyright 2025 The Hugo Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,17 +15,21 @@ package hugolib
 
 import (
 	"fmt"
-	"path/filepath"
+	"strings"
 	"testing"
 
 	qt "github.com/frankban/quicktest"
 )
 
 func TestPaginator(t *testing.T) {
-	configFile := `
+	var files strings.Builder
+	files.WriteString(`
+-- hugo.toml --
 baseURL = "https://example.com/foo/"
-paginate = 3
-paginatepath = "thepage"
+
+[pagination]
+pagerSize = 3
+path = "thepage"
 
 [languages.en]
 weight = 1
@@ -34,24 +38,29 @@ contentDir = "content/en"
 [languages.nn]
 weight = 2
 contentDir = "content/nn"
-
-`
-	b := newTestSitesBuilder(t).WithConfigFile("toml", configFile)
-	var content []string
-	for i := 0; i < 9; i++ {
-		for _, contentDir := range []string{"content/en", "content/nn"} {
-			content = append(content, fmt.Sprintf(contentDir+"/blog/page%d.md", i), fmt.Sprintf(`---
+`)
+	// Manually generate content files for the txtar string
+	for i := range 9 {
+		files.WriteString(fmt.Sprintf(`
+-- content/en/blog/page%d.md --
+---
 title: Page %d
 ---
 
 Content.
-`, i))
-		}
+`, i, i))
+		files.WriteString(fmt.Sprintf(`
+-- content/nn/blog/page%d.md --
+---
+title: Page %d
+---
+
+Content.
+`, i, i))
 	}
 
-	b.WithContent(content...)
-
-	pagTemplate := `
+	files.WriteString(`
+-- layouts/home.html --
 {{ $pag := $.Paginator }}
 Total: {{ $pag.TotalPages }}
 First: {{ $pag.First.URL }}
@@ -62,12 +71,20 @@ URL: {{ $pag.URL }}
 {{ range $i, $e := $pag.Pagers }}
 {{ printf "%d: %d/%d  %t" $i $pag.PageNumber .PageNumber (eq . $pag) -}}
 {{ end }}
-`
+-- layouts/index.xml --
+{{ $pag := $.Paginator }}
+Total: {{ $pag.TotalPages }}
+First: {{ $pag.First.URL }}
+Page Number: {{ $pag.PageNumber }}
+URL: {{ $pag.URL }}
+{{ with $pag.Next }}Next: {{ .URL }}{{ end }}
+{{ with $pag.Prev }}Prev: {{ .URL }}{{ end }}
+{{ range $i, $e := $pag.Pagers }}
+{{ printf "%d: %d/%d  %t" $i $pag.PageNumber .PageNumber (eq . $pag) -}}
+{{ end }}
+`)
 
-	b.WithTemplatesAdded("index.html", pagTemplate)
-	b.WithTemplatesAdded("index.xml", pagTemplate)
-
-	b.Build(BuildCfg{})
+	b := Test(t, files.String())
 
 	b.AssertFileContent("public/index.html",
 		"Page Number: 1",
@@ -100,31 +117,50 @@ URL: {{ $pag.URL }}
 
 // Issue 6023
 func TestPaginateWithSort(t *testing.T) {
-	b := newTestSitesBuilder(t).WithSimpleConfigFile()
-	b.WithTemplatesAdded("index.html", `{{ range (.Paginate (sort .Site.RegularPages ".File.Filename" "desc")).Pages }}|{{ .File.Filename }}{{ end }}`)
-	b.Build(BuildCfg{}).AssertFileContent("public/index.html",
-		filepath.FromSlash("|content/sect/doc1.nn.md|content/sect/doc1.nb.md|content/sect/doc1.fr.md|content/sect/doc1.en.md"))
+	files := `
+-- hugo.toml --
+-- content/a/a.md --
+-- content/z/b.md --
+-- content/x/b.md --
+-- content/x/a.md --
+-- layouts/home.html --
+Paginate: {{ range (.Paginate (sort .Site.RegularPages ".File.Filename" "desc")).Pages }}|{{ .Path }}{{ end }}
+`
+	b := Test(t, files)
+
+	b.AssertFileContent("public/index.html", "Paginate: |/z/b|/x/b|/x/a|/a/a")
 }
 
 // https://github.com/gohugoio/hugo/issues/6797
 func TestPaginateOutputFormat(t *testing.T) {
-	b := newTestSitesBuilder(t).WithSimpleConfigFile()
-	b.WithContent("_index.md", `---
+	var files strings.Builder
+	files.WriteString(`
+-- hugo.toml --
+baseURL = "http://example.com/"
+-- content/_index.md --
+---
 title: "Home"
 cascade:
   outputs:
     - JSON
----`)
-
-	for i := 0; i < 22; i++ {
-		b.WithContent(fmt.Sprintf("p%d.md", i+1), fmt.Sprintf(`---
+---
+`)
+	for i := range 22 {
+		files.WriteString(fmt.Sprintf(`
+-- content/p%d.md --
+---
 title: "Page"
 weight: %d
----`, i+1))
+---
+`, i+1, i+1))
 	}
 
-	b.WithTemplatesAdded("index.json", `JSON: {{ .Paginator.TotalNumberOfElements }}: {{ range .Paginator.Pages }}|{{ .RelPermalink }}{{ end }}:DONE`)
-	b.Build(BuildCfg{})
+	files.WriteString(`
+-- layouts/index.json --
+JSON: {{ .Paginator.TotalNumberOfElements }}: {{ range .Paginator.Pages }}|{{ .RelPermalink }}{{ end }}:DONE
+`)
+
+	b := Test(t, files.String())
 
 	b.AssertFileContent("public/index.json",
 		`JSON: 22
@@ -132,7 +168,54 @@ weight: %d
 `)
 
 	// This looks odd, so are most bugs.
-	b.Assert(b.CheckExists("public/page/1/index.json/index.html"), qt.Equals, false)
-	b.Assert(b.CheckExists("public/page/1/index.json"), qt.Equals, false)
+	b.AssertFileExists("public/page/1/index.json/index.html", false)
+	b.AssertFileExists("public/page/1/index.json", false)
 	b.AssertFileContent("public/page/2/index.json", `JSON: 22: |/p11/index.json|/p12/index.json`)
+}
+
+// Issue 10802
+func TestPaginatorEmptyPageGroups(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+baseURL = "https://example.com/"
+-- content/p1.md --
+-- content/p2.md --
+-- layouts/home.html --
+{{ $empty := site.RegularPages | complement site.RegularPages }}
+Len: {{ len $empty }}: Type: {{ printf "%T" $empty }}
+{{ $pgs := $empty.GroupByPublishDate "January 2006" }}
+{{ $pag := .Paginate $pgs }}
+Len Pag: {{ len $pag.Pages }}
+`
+	b := Test(t, files)
+
+	b.AssertFileContent("public/index.html", "Len: 0", "Len Pag: 0")
+}
+
+func TestPaginatorNodePagesOnly(t *testing.T) {
+	files := `
+-- hugo.toml --
+[pagination]
+pagerSize = 1
+-- content/p1.md --
+-- layouts/single.html --
+Paginator: {{ .Paginator }}
+`
+	b, err := TestE(t, files)
+	b.Assert(err, qt.IsNotNil)
+	b.Assert(err.Error(), qt.Contains, `error calling Paginator: pagination not supported for this page`)
+}
+
+func TestNilPointerErrorMessage(t *testing.T) {
+	files := `
+-- hugo.toml --	
+-- content/p1.md --
+-- layouts/single.html --
+Home Filename: {{ site.Home.File.Filename }}
+`
+	b, err := TestE(t, files)
+	b.Assert(err, qt.IsNotNil)
+	b.Assert(err.Error(), qt.Contains, `single.html:1:22: executing "single.html" – File is nil; wrap it in if or with: {{ with site.Home.File }}{{ .Filename }}{{ end }}`)
 }

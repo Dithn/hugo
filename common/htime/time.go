@@ -14,14 +14,14 @@
 package htime
 
 import (
+	"log"
 	"strings"
 	"time"
 
+	"github.com/bep/golocales"
+
+	"github.com/bep/clocks"
 	"github.com/spf13/cast"
-
-	toml "github.com/pelletier/go-toml/v2"
-
-	"github.com/gohugoio/locales"
 )
 
 var (
@@ -74,11 +74,13 @@ var (
 		"November",
 		"December",
 	}
+
+	Clock = clocks.System()
 )
 
-func NewTimeFormatter(ltr locales.Translator) TimeFormatter {
+func NewTimeFormatter(ltr golocales.Translator) TimeFormatter {
 	if ltr == nil {
-		panic("must provide a locales.Translator")
+		panic("must provide a golocales.Translator")
 	}
 	return TimeFormatter{
 		ltr: ltr,
@@ -87,7 +89,7 @@ func NewTimeFormatter(ltr locales.Translator) TimeFormatter {
 
 // TimeFormatter is locale aware.
 type TimeFormatter struct {
-	ltr locales.Translator
+	ltr golocales.Translator
 }
 
 func (f TimeFormatter) Format(t time.Time, layout string) string {
@@ -99,52 +101,78 @@ func (f TimeFormatter) Format(t time.Time, layout string) string {
 		// It may be one of Hugo's custom layouts.
 		switch strings.ToLower(layout[1:]) {
 		case "date_full":
-			return f.ltr.FmtDateFull(t)
+			return f.ltr.FormatDateFull(t)
 		case "date_long":
-			return f.ltr.FmtDateLong(t)
+			return f.ltr.FormatDateLong(t)
 		case "date_medium":
-			return f.ltr.FmtDateMedium(t)
+			return f.ltr.FormatDateMedium(t)
 		case "date_short":
-			return f.ltr.FmtDateShort(t)
+			return f.ltr.FormatDateShort(t)
 		case "time_full":
-			return f.ltr.FmtTimeFull(t)
+			return f.ltr.FormatTimeFull(t)
 		case "time_long":
-			return f.ltr.FmtTimeLong(t)
+			return f.ltr.FormatTimeLong(t)
 		case "time_medium":
-			return f.ltr.FmtTimeMedium(t)
+			return f.ltr.FormatTimeMedium(t)
 		case "time_short":
-			return f.ltr.FmtTimeShort(t)
+			return f.ltr.FormatTimeShort(t)
 		}
 	}
 
 	s := t.Format(layout)
 
-	monthIdx := t.Month() - 1 // Month() starts at 1.
+	monthIdx := t.Month() - 1 // time.Month is 1-based, but our month name slices are 0-based.
 	dayIdx := t.Weekday()
 
-	s = strings.ReplaceAll(s, longMonthNames[monthIdx], f.ltr.MonthWide(t.Month()))
-	if !strings.Contains(s, f.ltr.MonthWide(t.Month())) {
-		s = strings.ReplaceAll(s, shortMonthNames[monthIdx], f.ltr.MonthAbbreviated(t.Month()))
+	if strings.Contains(layout, "January") {
+		s = strings.ReplaceAll(s, longMonthNames[monthIdx], f.ltr.MonthsWide()[monthIdx])
+	} else if strings.Contains(layout, "Jan") {
+		s = strings.ReplaceAll(s, shortMonthNames[monthIdx], f.ltr.MonthsAbbreviated()[monthIdx])
 	}
-	s = strings.ReplaceAll(s, longDayNames[dayIdx], f.ltr.WeekdayWide(t.Weekday()))
-	if !strings.Contains(s, f.ltr.WeekdayWide(t.Weekday())) {
-		s = strings.ReplaceAll(s, shortDayNames[dayIdx], f.ltr.WeekdayAbbreviated(t.Weekday()))
+
+	if strings.Contains(layout, "Monday") {
+		s = strings.ReplaceAll(s, longDayNames[dayIdx], f.ltr.WeekdaysWide()[dayIdx])
+	} else if strings.Contains(layout, "Mon") {
+		s = strings.ReplaceAll(s, shortDayNames[dayIdx], f.ltr.WeekdaysAbbreviated()[dayIdx])
 	}
 
 	return s
 }
 
-func ToTimeInDefaultLocationE(i interface{}, location *time.Location) (tim time.Time, err error) {
+func ToTimeInDefaultLocationE(i any, location *time.Location) (tim time.Time, err error) {
 	switch vv := i.(type) {
-	case toml.LocalDate:
+	case AsTimeProvider:
 		return vv.AsTime(location), nil
-	case toml.LocalDateTime:
-		return vv.AsTime(location), nil
-	// issue #8895
-	// datetimes parsed by `go-toml` have empty zone name
-	// convert back them into string and use `cast`
 	case time.Time:
+		if name, _ := vv.Zone(); name != "" {
+			return vv, nil
+		}
+		// go-toml creates fixed zones with an empty name (issue #8895).
+		// Round-trip these through cast to match a local zone name if possible.
 		i = vv.Format(time.RFC3339)
 	}
 	return cast.ToTimeInDefaultLocationE(i, location)
+}
+
+// Now returns time.Now() or time value based on the `clock` flag.
+// Use this function to fake time inside hugo.
+func Now() time.Time {
+	return Clock.Now()
+}
+
+func Since(t time.Time) time.Duration {
+	return Clock.Since(t)
+}
+
+// AsTimeProvider is implemented by go-toml's LocalDate and LocalDateTime.
+type AsTimeProvider interface {
+	AsTime(zone *time.Location) time.Time
+}
+
+// StopWatch is a simple helper to measure time during development.
+func StopWatch(name string) func() {
+	start := time.Now()
+	return func() {
+		log.Printf("StopWatch %q took %s", name, time.Since(start))
+	}
 }

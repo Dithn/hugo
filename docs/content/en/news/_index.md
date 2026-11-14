@@ -1,4 +1,8 @@
 ---
-title: "Hugo News"
-aliases: [/release-notes/]
+title: News
+description: Stay up-to-date with the latest news and announcements.
+outputs:
+  - html
+  - rss
+weight: 10
 ---

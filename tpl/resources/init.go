@@ -14,6 +14,8 @@
 package resources
 
 import (
+	"context"
+
 	"github.com/gohugoio/hugo/deps"
 	"github.com/gohugoio/hugo/tpl/internal"
 )
@@ -30,10 +32,45 @@ func init() {
 
 		ns := &internal.TemplateFuncsNamespace{
 			Name:    name,
-			Context: func(args ...interface{}) (interface{}, error) { return ctx, nil },
+			Context: func(cctx context.Context, args ...any) (any, error) { return ctx, nil },
 		}
 
+		ns.AddMethodMapping(ctx.ByType,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.Concat,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.Copy,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.ExecuteAsTemplate,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.Fingerprint,
+			[]string{"fingerprint"},
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.FromString,
+			nil,
+			[][2]string{},
+		)
+
 		ns.AddMethodMapping(ctx.Get,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.Match,
 			nil,
 			[][2]string{},
 		)
@@ -43,10 +80,8 @@ func init() {
 			[][2]string{},
 		)
 
-		// Add aliases for the most common transformations.
-
-		ns.AddMethodMapping(ctx.Fingerprint,
-			[]string{"fingerprint"},
+		ns.AddMethodMapping(ctx.Match,
+			nil,
 			[][2]string{},
 		)
 
@@ -55,18 +90,13 @@ func init() {
 			[][2]string{},
 		)
 
-		ns.AddMethodMapping(ctx.ToCSS,
-			[]string{"toCSS"},
+		ns.AddMethodMapping(ctx.Publish,
+			nil,
 			[][2]string{},
 		)
 
-		ns.AddMethodMapping(ctx.PostCSS,
-			[]string{"postCSS"},
-			[][2]string{},
-		)
-
-		ns.AddMethodMapping(ctx.Babel,
-			[]string{"babel"},
+		ns.AddMethodMapping(ctx.PostProcess,
+			nil,
 			[][2]string{},
 		)
 

@@ -24,16 +24,18 @@ func TestDoArithmetic(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		a      interface{}
-		b      interface{}
+		a      any
+		b      any
 		op     rune
-		expect interface{}
+		expect any
 	}{
 		{3, 2, '+', int64(5)},
+		{0, 0, '+', int64(0)},
 		{3, 2, '-', int64(1)},
 		{3, 2, '*', int64(6)},
 		{3, 2, '/', int64(1)},
 		{3.0, 2, '+', float64(5)},
+		{0.0, 0, '+', float64(0.0)},
 		{3.0, 2, '-', float64(1)},
 		{3.0, 2, '*', float64(6)},
 		{3.0, 2, '/', float64(1.5)},
@@ -42,18 +44,22 @@ func TestDoArithmetic(t *testing.T) {
 		{3, 2.0, '*', float64(6)},
 		{3, 2.0, '/', float64(1.5)},
 		{3.0, 2.0, '+', float64(5)},
+		{0.0, 0.0, '+', float64(0.0)},
 		{3.0, 2.0, '-', float64(1)},
 		{3.0, 2.0, '*', float64(6)},
 		{3.0, 2.0, '/', float64(1.5)},
 		{uint(3), uint(2), '+', uint64(5)},
+		{uint(0), uint(0), '+', uint64(0)},
 		{uint(3), uint(2), '-', uint64(1)},
 		{uint(3), uint(2), '*', uint64(6)},
 		{uint(3), uint(2), '/', uint64(1)},
 		{uint(3), 2, '+', uint64(5)},
+		{uint(0), 0, '+', uint64(0)},
 		{uint(3), 2, '-', uint64(1)},
 		{uint(3), 2, '*', uint64(6)},
 		{uint(3), 2, '/', uint64(1)},
 		{3, uint(2), '+', uint64(5)},
+		{0, uint(0), '+', uint64(0)},
 		{3, uint(2), '-', uint64(1)},
 		{3, uint(2), '*', uint64(6)},
 		{3, uint(2), '/', uint64(1)},
@@ -66,16 +72,15 @@ func TestDoArithmetic(t *testing.T) {
 		{-3, uint(2), '*', int64(-6)},
 		{-3, uint(2), '/', int64(-1)},
 		{uint(3), 2.0, '+', float64(5)},
+		{uint(0), 0.0, '+', float64(0)},
 		{uint(3), 2.0, '-', float64(1)},
 		{uint(3), 2.0, '*', float64(6)},
 		{uint(3), 2.0, '/', float64(1.5)},
 		{3.0, uint(2), '+', float64(5)},
+		{0.0, uint(0), '+', float64(0)},
 		{3.0, uint(2), '-', float64(1)},
 		{3.0, uint(2), '*', float64(6)},
 		{3.0, uint(2), '/', float64(1.5)},
-		{0, 0, '+', 0},
-		{0, 0, '-', 0},
-		{0, 0, '*', 0},
 		{"foo", "bar", '+', "foobar"},
 		{3, 0, '/', false},
 		{3.0, 0, '/', false},

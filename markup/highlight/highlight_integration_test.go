@@ -1,0 +1,277 @@
+// Copyright 2024 The Hugo Authors. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package highlight_test
+
+import (
+	"strings"
+	"testing"
+
+	qt "github.com/frankban/quicktest"
+	"github.com/gohugoio/hugo/hugolib"
+)
+
+func TestHighlightInline(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+[markup]
+[markup.highlight]
+codeFences = true
+noClasses = false
+-- content/p1.md --
+---
+title: "p1"
+---
+
+## Inline in Shortcode
+
+Inline:{{< highlight emacs "hl_inline=true" >}}(message "this highlight shortcode"){{< /highlight >}}:End.
+Inline Unknown:{{< highlight foo "hl_inline=true" >}}(message "this highlight shortcode"){{< /highlight >}}:End.
+
+## Inline in code block
+
+Not sure if this makes sense, but add a test for it:
+
+§§§bash {hl_inline=true}
+(message "highlight me")
+§§§
+
+## HighlightCodeBlock in hook
+
+§§§html
+(message "highlight me 2")
+§§§
+
+## Unknown lexer
+
+§§§foo {hl_inline=true}
+(message "highlight me 3")
+§§§
+
+
+-- layouts/_markup/render-codeblock-html.html --
+{{ $opts := dict "hl_inline" true }}
+{{ $result := transform.HighlightCodeBlock . $opts }}
+HighlightCodeBlock: Wrapped:{{ $result.Wrapped  }}|Inner:{{ $result.Inner }}
+-- layouts/single.html --
+{{ .Content }}
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/p1/index.html",
+		"Inline:<code class=\"code-inline language-emacs\"><span class=\"p\">(</span><span class=\"nf\">message</span> <span class=\"s\">&#34;this highlight shortcode&#34;</span><span class=\"p\">)</span></code>:End.",
+		"Inline Unknown:<code class=\"code-inline language-foo\">(message &#34;this highlight shortcode&#34;)</code>:End.",
+		"Not sure if this makes sense, but add a test for it:</p>\n<code class=\"code-inline language-bash\"><span class=\"o\">(</span>message <span class=\"s2\">&#34;highlight me&#34;</span><span class=\"o\">)</span>\n</code>",
+		"HighlightCodeBlock: Wrapped:<code class=\"code-inline language-html\">(message &#34;highlight me 2&#34;)</code>|Inner:<code class=\"code-inline language-html\">(message &#34;highlight me 2&#34;)</code>",
+		"<code class=\"code-inline language-foo\">(message &#34;highlight me 3&#34;)\n</code>",
+	)
+}
+
+// See issue 11872.
+func TestCodeblockWithTypeOverride(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+disableKinds = ['home','rss','section','sitemap','taxonomy','term']
+[markup.highlight]
+noClasses = false # to reduce size of assertion string
+-- content/p1.md --
+---
+title: p1
+---
+§§§go {style=monokai class=my-class tabWidth=8}
+i = 42
+§§§
+-- content/p2.md --
+---
+title: p2
+---
+§§§{style=monokai class=my-class tabWidth=8}
+i = 42
+§§§
+-- layouts/page.html --
+{{ .Content }}
+-- layouts/_markup/render-codeblock.html --
+{{- $opts := dict }}
+{{- if not (transform.CanHighlight .Type) }}
+	{{- $opts = dict "type" "text" }}
+{{- end }}
+{{- $result := transform.HighlightCodeBlock . $opts }}
+{{- $result.Wrapped -}}
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/p1/index.html",
+		`<div class="highlight my-class"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">i</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">42</span></span></span></code></pre></div>`,
+	)
+	b.AssertFileContent("public/p2/index.html",
+		`<div class="highlight my-class"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">i = 42</span></span></code></pre></div>`,
+	)
+}
+
+// Issue #11311
+func TestIssue11311(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+[markup.highlight]
+noClasses = false
+-- content/_index.md --
+---
+title: home
+---
+§§§go
+xəx := 0
+§§§
+-- layouts/home.html --
+{{ .Content }}
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/index.html", `
+		<span class="nx">xəx</span>
+	`)
+}
+
+func TestHighlightClass(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+[markup.highlight]
+noClasses = false
+wrapperClass = "highlight no-prose"
+-- content/_index.md --
+---
+title: home
+---
+§§§go
+xəx := 0
+§§§
+-- layouts/home.html --
+{{ .Content }}
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/index.html", `
+		 <div class="highlight no-prose"><pre
+	`)
+}
+
+func TestHighlightLineNos(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- config.toml --
+disableKinds = ['page','rss','section','sitemap','taxonomy','term']
+[markup.highlight]
+noClasses = false
+lineNoStart = 42
+#LINENOS
+-- content/_index.md --
+---
+title: home
+---
+§§§go
+aaa
+§§§
+-- layouts/index.html --
+{{ .Content }}
+`
+
+	b := hugolib.Test(t, files)
+	b.AssertFileContent("public/index.html",
+		`<span class="nx">aaa</span>`,
+		`! <table class="lntable">`,
+		`! 42`,
+	)
+
+	f := strings.ReplaceAll(files, "#LINENOS", `linenos = false`)
+	b = hugolib.Test(t, f)
+	b.AssertFileContent("public/index.html",
+		`<span class="nx">aaa</span>`,
+		`! <table class="lntable">`,
+		`! 42`,
+	)
+
+	f = strings.ReplaceAll(files, "#LINENOS", `linenos = true`)
+	b = hugolib.Test(t, f)
+	b.AssertFileContent("public/index.html",
+		`<span class="nx">aaa</span>`,
+		`<table class="lntable">`,
+		`42`,
+	)
+
+	f = strings.ReplaceAll(files, "#LINENOS", `linenos = "table"`)
+	b = hugolib.Test(t, f)
+	b.AssertFileContent("public/index.html",
+		`<span class="nx">aaa</span>`,
+		`<table class="lntable">`,
+		`42`,
+	)
+
+	f = strings.ReplaceAll(files, "#LINENOS", `linenos = "inline"`)
+	b = hugolib.Test(t, f)
+	b.AssertFileContent("public/index.html",
+		`<span class="nx">aaa</span>`,
+		`! <table class="lntable">`,
+		`42`,
+	)
+
+	want := `.* lineNos must be one of .*`
+
+	f = strings.ReplaceAll(files, "#LINENOS", `linenos = "foo"`)
+	b, err := hugolib.TestE(t, f)
+	b.Assert(err, qt.ErrorMatches, want)
+
+	f = strings.ReplaceAll(files, "#LINENOS", `linenos = 123`)
+	b, err = hugolib.TestE(t, f)
+	b.Assert(err, qt.ErrorMatches, want)
+}
+
+func TestHighlightWrapperClassIsEscaped(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+disableKinds = ['page','rss','section','sitemap','taxonomy','term']
+-- content/_index.md --
+---
+title: home
+---
+{{< highlight go "wrapperClass=x\"><script>alert(1)</script>" >}}
+package main
+{{< /highlight >}}
+
+§§§go {wrapperClass="y\"><script>alert(2)</script>"}
+package main
+§§§
+-- layouts/home.html --
+{{ .Content }}
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/index.html",
+		`<div class="x&#34;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"><pre`,
+		"! <script>",
+	)
+}

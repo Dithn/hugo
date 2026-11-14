@@ -15,21 +15,28 @@ package modules
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
-	"github.com/pkg/errors"
-
+	"github.com/bep/logg"
+	"github.com/gohugoio/hugo/common/hstrings"
 	"github.com/gohugoio/hugo/common/hugo"
+	"github.com/gohugoio/hugo/common/types"
+	"github.com/gohugoio/hugo/common/version"
+	"github.com/gohugoio/hugo/hugofs/files"
+	hglob "github.com/gohugoio/hugo/hugofs/hglob"
+	"github.com/gohugoio/hugo/hugolib/sitesmatrix"
+	"github.com/gohugoio/hugo/langs"
 
 	"github.com/gohugoio/hugo/config"
-	"github.com/gohugoio/hugo/hugofs/files"
-	"github.com/gohugoio/hugo/langs"
 	"github.com/mitchellh/mapstructure"
 )
 
-var DefaultModuleConfig = Config{
+const WorkspaceDisabled = "off"
 
+var DefaultModuleConfig = Config{
 	// Default to direct, which means "git clone" and similar. We
 	// will investigate proxy settings in more depth later.
 	// See https://github.com/golang/go/issues/26334
@@ -43,6 +50,9 @@ var DefaultModuleConfig = Config{
 	// treated as private.
 	Private: "*.*",
 
+	// Default is no workspace resolution.
+	Workspace: WorkspaceDisabled,
+
 	// A list of replacement directives mapping a module path to a directory
 	// or a theme component in the themes folder.
 	// Note that this will turn the component into a traditional theme component
@@ -54,12 +64,8 @@ var DefaultModuleConfig = Config{
 
 // ApplyProjectConfigDefaults applies default/missing module configuration for
 // the main project.
-func ApplyProjectConfigDefaults(cfg config.Provider, mod Module) error {
+func ApplyProjectConfigDefaults(logger logg.Logger, mod Module, cfgs ...config.AllProvider) error {
 	moda := mod.(*moduleAdapter)
-
-	// Map legacy directory config into the new module.
-	languages := cfg.Get("languagesSortedDefaultFirst").(langs.Languages)
-	isMultiHost := languages.IsMultihost()
 
 	// To bridge between old and new configuration format we need
 	// a way to make sure all of the core components are configured on
@@ -71,131 +77,108 @@ func ApplyProjectConfigDefaults(cfg config.Provider, mod Module) error {
 		}
 	}
 
-	type dirKeyComponent struct {
-		key          string
-		component    string
-		multilingual bool
-	}
-
-	dirKeys := []dirKeyComponent{
-		{"contentDir", files.ComponentFolderContent, true},
-		{"dataDir", files.ComponentFolderData, false},
-		{"layoutDir", files.ComponentFolderLayouts, false},
-		{"i18nDir", files.ComponentFolderI18n, false},
-		{"archetypeDir", files.ComponentFolderArchetypes, false},
-		{"assetDir", files.ComponentFolderAssets, false},
-		{"", files.ComponentFolderStatic, isMultiHost},
-	}
-
-	createMountsFor := func(d dirKeyComponent, cfg config.Provider) []Mount {
-		var lang string
-		if language, ok := cfg.(*langs.Language); ok {
-			lang = language.Lang
-		}
-
-		// Static mounts are a little special.
-		if d.component == files.ComponentFolderStatic {
-			var mounts []Mount
-			staticDirs := getStaticDirs(cfg)
-			if len(staticDirs) > 0 {
-				componentsConfigured[d.component] = true
-			}
-
-			for _, dir := range staticDirs {
-				mounts = append(mounts, Mount{Lang: lang, Source: dir, Target: d.component})
-			}
-
-			return mounts
-
-		}
-
-		if cfg.IsSet(d.key) {
-			source := cfg.GetString(d.key)
-			componentsConfigured[d.component] = true
-
-			return []Mount{{
-				// No lang set for layouts etc.
-				Source: source,
-				Target: d.component,
-			}}
-		}
-
-		return nil
-	}
-
-	createMounts := func(d dirKeyComponent) []Mount {
-		var mounts []Mount
-		if d.multilingual {
-			if d.component == files.ComponentFolderContent {
-				seen := make(map[string]bool)
-				hasContentDir := false
-				for _, language := range languages {
-					if language.ContentDir != "" {
-						hasContentDir = true
-						break
-					}
-				}
-
-				if hasContentDir {
-					for _, language := range languages {
-						contentDir := language.ContentDir
-						if contentDir == "" {
-							contentDir = files.ComponentFolderContent
-						}
-						if contentDir == "" || seen[contentDir] {
-							continue
-						}
-						seen[contentDir] = true
-						mounts = append(mounts, Mount{Lang: language.Lang, Source: contentDir, Target: d.component})
-					}
-				}
-
-				componentsConfigured[d.component] = len(seen) > 0
-
-			} else {
-				for _, language := range languages {
-					mounts = append(mounts, createMountsFor(d, language)...)
-				}
-			}
-		} else {
-			mounts = append(mounts, createMountsFor(d, cfg)...)
-		}
-
-		return mounts
-	}
-
 	var mounts []Mount
-	for _, dirKey := range dirKeys {
-		if componentsConfigured[dirKey.component] {
+
+	for _, component := range []string{
+		files.ComponentFolderContent,
+		files.ComponentFolderData,
+		files.ComponentFolderLayouts,
+		files.ComponentFolderI18n,
+		files.ComponentFolderArchetypes,
+		files.ComponentFolderAssets,
+		files.ComponentFolderStatic,
+	} {
+		if componentsConfigured[component] {
 			continue
 		}
 
-		mounts = append(mounts, createMounts(dirKey)...)
+		first := cfgs[0]
+		dirsBase := first.DirsBase()
+		isMultihost := first.IsMultihost()
 
-	}
+		for i, cfg := range cfgs {
+			dirs := cfg.Dirs()
+			var dir string
+			var dropLang bool
+			switch component {
+			case files.ComponentFolderContent:
+				dir = dirs.ContentDir
+				dropLang = dir == dirsBase.ContentDir
+			case files.ComponentFolderData:
+				//lint:ignore SA1019 Keep as adapter for now.
+				dir = dirs.DataDir
+			case files.ComponentFolderLayouts:
+				//lint:ignore SA1019 Keep as adapter for now.
+				dir = dirs.LayoutDir
+			case files.ComponentFolderI18n:
+				//lint:ignore SA1019 Keep as adapter for now.
+				dir = dirs.I18nDir
+			case files.ComponentFolderArchetypes:
+				//lint:ignore SA1019 Keep as adapter for now.
+				dir = dirs.ArcheTypeDir
+			case files.ComponentFolderAssets:
+				//lint:ignore SA1019 Keep as adapter for now.
+				dir = dirs.AssetDir
+			case files.ComponentFolderStatic:
+				// For static dirs, we only care about the language in multihost setups.
+				dropLang = !isMultihost
+			}
 
-	// Add default configuration
-	for _, dirKey := range dirKeys {
-		if componentsConfigured[dirKey.component] {
-			continue
+			var perLang bool
+			switch component {
+			case files.ComponentFolderContent, files.ComponentFolderStatic:
+				perLang = true
+			default:
+			}
+			if i > 0 && !perLang {
+				continue
+			}
+
+			var lang string
+			var sites sitesmatrix.Sites
+
+			if perLang && !dropLang {
+				l := cfg.Language().(*langs.Language)
+				lang = l.Lang
+				sites = sitesmatrix.Sites{
+					Matrix: sitesmatrix.StringSlices{
+						Languages: []string{l.Lang},
+					},
+				}
+			}
+
+			// Static mounts are a little special.
+			if component == files.ComponentFolderStatic {
+				staticDirs := cfg.StaticDirs()
+				for _, dir := range staticDirs {
+					mounts = append(mounts, Mount{Sites: sites, Source: dir, Target: component})
+				}
+				continue
+			}
+
+			if dir != "" {
+				mnt := Mount{Source: dir, Target: component, Sites: sites}
+				if err := mnt.init(logger); err != nil {
+					return fmt.Errorf("failed to init mount %q %d: %w", lang, i, err)
+				}
+				mounts = append(mounts, mnt)
+			}
 		}
-		mounts = append(mounts, Mount{Source: dirKey.component, Target: dirKey.component})
 	}
 
-	// Prepend the mounts from configuration.
-	mounts = append(moda.mounts, mounts...)
+	moda.mounts = append(moda.mounts, mounts...)
 
-	moda.mounts = mounts
+	moda.mounts = filterDuplicateMounts(moda.mounts)
 
 	return nil
 }
 
 // DecodeConfig creates a modules Config from a given Hugo configuration.
-func DecodeConfig(cfg config.Provider) (Config, error) {
-	return decodeConfig(cfg, nil)
+func DecodeConfig(logger logg.Logger, cfg config.Provider) (Config, error) {
+	return decodeConfig(logger, cfg, nil)
 }
 
-func decodeConfig(cfg config.Provider, pathReplacements map[string]string) (Config, error) {
+func decodeConfig(logger logg.Logger, cfg config.Provider, pathReplacements map[string]string) (Config, error) {
 	c := DefaultModuleConfig
 	c.replacementsMap = pathReplacements
 
@@ -226,7 +209,7 @@ func decodeConfig(cfg config.Provider, pathReplacements map[string]string) (Conf
 			for _, repl := range c.Replacements {
 				parts := strings.Split(repl, "->")
 				if len(parts) != 2 {
-					return c, errors.Errorf(`invalid module.replacements: %q; configure replacement pairs on the form "oldpath->newpath" `, repl)
+					return c, fmt.Errorf(`invalid module.replacements: %q; configure replacement pairs on the form "oldpath->newpath" `, repl)
 				}
 
 				c.replacementsMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
@@ -246,9 +229,26 @@ func decodeConfig(cfg config.Provider, pathReplacements map[string]string) (Conf
 		for i, mnt := range c.Mounts {
 			mnt.Source = filepath.Clean(mnt.Source)
 			mnt.Target = filepath.Clean(mnt.Target)
+			if err := mnt.init(logger); err != nil {
+				return c, fmt.Errorf("failed to init mount %d: %w", i, err)
+			}
 			c.Mounts[i] = mnt
 		}
 
+		if c.Workspace == "" {
+			c.Workspace = WorkspaceDisabled
+		}
+		if c.Workspace != WorkspaceDisabled {
+			c.Workspace = filepath.Clean(c.Workspace)
+			if !filepath.IsAbs(c.Workspace) {
+				workingDir := cfg.GetString("workingDir")
+				c.Workspace = filepath.Join(workingDir, c.Workspace)
+			}
+			if _, err := os.Stat(c.Workspace); err != nil {
+				//lint:ignore ST1005 end user message.
+				return c, fmt.Errorf("module workspace %q does not exist. Check your module.workspace setting (or HUGO_MODULE_WORKSPACE env var).", c.Workspace)
+			}
+		}
 	}
 
 	if themeSet {
@@ -258,7 +258,6 @@ func decodeConfig(cfg config.Provider, pathReplacements map[string]string) (Conf
 				Path: imp,
 			})
 		}
-
 	}
 
 	return c, nil
@@ -266,35 +265,60 @@ func decodeConfig(cfg config.Provider, pathReplacements map[string]string) (Conf
 
 // Config holds a module config.
 type Config struct {
-	Mounts  []Mount
+	// File system mounts.
+	Mounts []Mount
+
+	// Module imports.
 	Imports []Import
 
 	// Meta info about this module (license information etc.).
-	Params map[string]interface{}
+	Params map[string]any
 
 	// Will be validated against the running Hugo version.
 	HugoVersion HugoVersion
 
-	// A optional Glob pattern matching module paths to skip when vendoring, e.g.
-	// "github.com/**".
+	// Optional Glob pattern matching module paths to skip when vendoring, e.g. “github.com/**”
 	NoVendor string
 
 	// When enabled, we will pick the vendored module closest to the module
 	// using it.
-	// The default behaviour is to pick the first.
+	// The default behavior is to pick the first.
 	// Note that there can still be only one dependency of a given module path,
 	// so once it is in use it cannot be redefined.
 	VendorClosest bool
 
+	// A comma separated (or a slice) list of module path to directory replacement mapping,
+	// e.g. github.com/bep/my-theme -> ../..,github.com/bep/shortcodes -> /some/path.
+	// This is mostly useful for temporary locally development of a module, and then it makes sense to set it as an
+	// OS environment variable, e.g: env HUGO_MODULE_REPLACEMENTS="github.com/bep/my-theme -> ../..".
+	// Any relative path is relate to themesDir, and absolute paths are allowed.
 	Replacements    []string
 	replacementsMap map[string]string
 
-	// Configures GOPROXY.
+	// Defines the proxy server to use to download remote modules. Default is direct, which means “git clone” and similar.
+	// Configures GOPROXY when running the Go command for module operations.
 	Proxy string
-	// Configures GONOPROXY.
+
+	// Comma separated glob list matching paths that should not use the proxy configured above.
+	// Configures GONOPROXY when running the Go command for module operations.
 	NoProxy string
-	// Configures GOPRIVATE.
+
+	// Comma separated glob list matching paths that should be treated as private.
+	// Configures GOPRIVATE when running the Go command for module operations.
 	Private string
+
+	// Configures GOAUTH when running the Go command for module operations.
+	// This is a semicolon-separated list of authentication commands for go-import and HTTPS module mirror interactions.
+	// This is useful for private repositories.
+	// See `go help goauth` for more information.
+	Auth string
+
+	// Defaults to "off".
+	// Set to a work file, e.g. hugo.work, to enable Go "Workspace" mode.
+	// Can be relative to the working directory or absolute.
+	// Requires Go 1.18+.
+	// Note that this can also be set via OS env, e.g. export HUGO_MODULE_WORKSPACE=/my/hugo.work.
+	Workspace string
 }
 
 // hasModuleImport reports whether the project config have one or more
@@ -311,12 +335,13 @@ func (c Config) hasModuleImport() bool {
 // HugoVersion holds Hugo binary version requirements for a module.
 type HugoVersion struct {
 	// The minimum Hugo version that this module works with.
-	Min hugo.VersionString
+	Min version.VersionString
 
-	// The maxium Hugo version that this module works with.
-	Max hugo.VersionString
+	// The maximum Hugo version that this module works with.
+	Max version.VersionString
 
 	// Set if the extended version is needed.
+	// Deprecated: The extended edition of Hugo was removed in v0.170.0, and this setting has no effect.
 	Extended bool
 }
 
@@ -345,50 +370,127 @@ func (v HugoVersion) String() string {
 // Hugo binary.
 func (v HugoVersion) IsValid() bool {
 	current := hugo.CurrentVersion.Version()
-	if v.Extended && !hugo.IsExtended {
+
+	if v.Min != "" && current.Compare(v.Min) > 0 {
 		return false
 	}
 
-	isValid := true
-
-	if v.Min != "" && current.Compare(v.Min) > 0 {
-		isValid = false
-	}
-
 	if v.Max != "" && current.Compare(v.Max) < 0 {
-		isValid = false
+		return false
 	}
 
-	return isValid
+	return true
 }
 
 type Import struct {
-	Path                string // Module path
-	pathProjectReplaced bool   // Set when Path is replaced in project config.
-	IgnoreConfig        bool   // Ignore any config in config.toml (will still folow imports).
-	IgnoreImports       bool   // Do not follow any configured imports.
-	NoMounts            bool   // Do not mount any folder in this import.
-	NoVendor            bool   // Never vendor this import (only allowed in main project).
-	Disable             bool   // Turn off this module.
-	Mounts              []Mount
+	// Module path
+	Path string
+
+	// The common case is to leave this empty and let Go Modules resolve the version.
+	// Can be set to a version query, e.g. "v1.2.3", ">=v1.2.0", "latest", which will
+	// make this a direct dependency.
+	Version string
+	// Set when Path is replaced in project config.
+	pathProjectReplaced bool
+	// Ignore any config in config.toml (will still follow imports).
+	IgnoreConfig bool
+	// Do not follow any configured imports.
+	IgnoreImports bool
+	// Do not mount any folder in this import.
+	NoMounts bool
+	// Never vendor this import (only allowed in main project).
+	NoVendor bool
+	// Turn off this module.
+	Disable bool
+	// File mounts.
+	Mounts []Mount
+
+	// Controls whether npm package files (package.json/package.hugo.json) are
+	// read from this module. Values: "auto" (default), "always", "never".
+	// "auto" reads package files when a Hugo config file or package.hugo.json
+	// is present in the module root.
+	UsePackageJSON string
 }
+
+const (
+	UsePackageJSONAuto   = "auto"
+	UsePackageJSONAlways = "always"
+	UsePackageJSONNever  = "never"
+)
 
 type Mount struct {
-	Source string // relative path in source repo, e.g. "scss"
-	Target string // relative target path, e.g. "assets/bootstrap/scss"
+	// Relative path in source repo, e.g. "scss".
+	Source string
 
-	Lang string // any language code associated with this mount.
+	// Relative target path, e.g. "assets/bootstrap/scss".
+	Target string
+
+	// Any file in this mount will be associated with this language.
+	// Deprecated, use Sites instead.
+	Lang string `json:"-"`
+
+	// Sites defines which sites this mount applies to.
+	Sites sitesmatrix.Sites
+
+	// A slice of Glob patterns (string or slice) to exclude or include in this mount.
+	// To exclude, prefix with "! ".
+	Files []string
 
 	// Include only files matching the given Glob patterns (string or slice).
-	IncludeFiles interface{}
+	// Deprecated, use Files instead.
+	IncludeFiles any `json:"-"`
 
 	// Exclude all files matching the given Glob patterns (string or slice).
-	ExcludeFiles interface{}
+	// Deprecated, use Files instead.
+	ExcludeFiles any `json:"-"`
+
+	// Disable watching in watch mode for this mount.
+	DisableWatch bool
 }
 
-// Used as key to remove duplicates.
-func (m Mount) key() string {
-	return strings.Join([]string{m.Lang, m.Source, m.Target}, "/")
+func (m Mount) Equal(o Mount) bool {
+	if m.Lang != o.Lang {
+		return false
+	}
+	if m.Source != o.Source {
+		return false
+	}
+	if m.Target != o.Target {
+		return false
+	}
+	if m.DisableWatch != o.DisableWatch {
+		return false
+	}
+
+	if !m.Sites.Equal(o.Sites) {
+		return false
+	}
+
+	patterns, hasLegacy11, hasLegacy12 := m.FilesToFilter()
+	patterns2, hasLegacy21, hasLegacy22 := o.FilesToFilter()
+
+	if hasLegacy11 != hasLegacy21 || hasLegacy12 != hasLegacy22 {
+		return false
+	}
+
+	return slices.Equal(patterns, patterns2)
+}
+
+func (m Mount) FilesToFilter() (patterns []string, hasLegacyIncludeFiles, hasLegacyExcludeFiles bool) {
+	patterns = m.Files
+
+	// Legacy config, add IncludeFiles first.
+	for _, pattern := range types.ToStringSlicePreserveString(m.IncludeFiles) {
+		hasLegacyIncludeFiles = true
+		patterns = append(patterns, pattern)
+	}
+
+	for _, pattern := range types.ToStringSlicePreserveString(m.ExcludeFiles) {
+		hasLegacyExcludeFiles = true
+		patterns = append(patterns, hglob.NegationPrefix+pattern)
+	}
+
+	return patterns, hasLegacyIncludeFiles, hasLegacyExcludeFiles
 }
 
 func (m Mount) Component() string {
@@ -396,25 +498,21 @@ func (m Mount) Component() string {
 }
 
 func (m Mount) ComponentAndName() (string, string) {
-	k := strings.Index(m.Target, fileSeparator)
-	if k == -1 {
-		return m.Target, ""
-	}
-	return m.Target[:k], m.Target[k+1:]
+	c, n, _ := strings.Cut(m.Target, fileSeparator)
+	return c, n
 }
 
-func getStaticDirs(cfg config.Provider) []string {
-	var staticDirs []string
-	for i := -1; i <= 10; i++ {
-		staticDirs = append(staticDirs, getStringOrStringSlice(cfg, "staticDir", i)...)
-	}
-	return staticDirs
-}
+func (m *Mount) init(logger logg.Logger) error {
+	if m.Lang != "" {
+		// We moved this to a more flixeble setup in Hugo 0.153.0.
+		m.Sites.Matrix.Languages = append(m.Sites.Matrix.Languages, m.Lang)
+		m.Lang = ""
 
-func getStringOrStringSlice(cfg config.Provider, key string, id int) []string {
-	if id >= 0 {
-		key = fmt.Sprintf("%s%d", key, id)
+		hugo.DeprecateWithLogger("module.mounts.lang", "Replaced by the more powerful 'sites.matrix' setting, see https://gohugo.io/configuration/module/#mounts", "v0.153.0", logger)
+
 	}
 
-	return config.GetStringSlicePreserveString(cfg, key)
+	m.Sites.Matrix.Languages = hstrings.UniqueStringsReuse(m.Sites.Matrix.Languages)
+
+	return nil
 }

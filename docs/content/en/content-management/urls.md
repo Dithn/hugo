@@ -1,313 +1,282 @@
 ---
-title: URL Management
-linktitle: URL Management
-description: Hugo supports permalinks, aliases, link canonicalization, and multiple options for handling relative vs absolute URLs.
-date: 2017-02-01
-publishdate: 2017-02-01
-lastmod: 2017-03-09
-keywords: [aliases,redirects,permalinks,urls]
-categories: [content management]
-menu:
-  docs:
-    parent: "content-management"
-    weight: 110
-weight: 110	#rem
-draft: false
-aliases: [/extras/permalinks/,/extras/aliases/,/extras/urls/,/doc/redirects/,/doc/alias/,/doc/aliases/]
-toc: true
+title: URL management
+description: Control the structure and appearance of URLs through front matter entries and settings in your project configuration.
+categories: []
+keywords: []
 ---
 
-## Permalinks
+## Overview
 
-The default Hugo target directory for your built website is `public/`. However, you can change this value by specifying a different `publishDir` in your [site configuration][config]. The directories created at build time for a section reflect the position of the content's directory within the `content` folder and namespace matching its layout within the `contentdir` hierarchy.
+By default, when Hugo renders a page, the resulting URL matches the file path within the `content` directory. For example:
 
-The `permalinks` option in your [site configuration][config] allows you to adjust the directory paths (i.e., the URLs) on a per-section basis. This will change where the files are written to and will change the page's internal "canonical" location, such that template references to `.RelPermalink` will honor the adjustments made as a result of the mappings in this option.
+```text
+content/posts/post-1.md → https://example.org/posts/post-1/
+```
 
-{{% note "Default Publish and Content Folders" %}}
-These examples use the default values for `publishDir` and `contentDir`; i.e., `public` and `content`, respectively. You can override the default values in your [site's `config` file](/getting-started/configuration/).
-{{% /note %}}
+You can change the structure and appearance of URLs with front matter values and configuration settings.
 
-For example, if one of your [sections][] is called `posts` and you want to adjust the canonical path to be hierarchical based on the year, month, and post title, you could set up the following configurations in YAML and TOML, respectively.
+## Front matter
 
-### Permalinks Configuration Example
+Override the default URL for a page using these front matter fields.
 
-{{< code-toggle file="config" copy="false" >}}
-permalinks:
-  posts: /:year/:month/:title/
+### Slug
+
+Set the `slug` in front matter to override the last segment of the path. This front matter field is not applicable to the `home` page.
+
+{{< code-toggle file=content/posts/post-1.md fm=true >}}
+title = 'My First Post'
+slug = 'my-first-post'
 {{< /code-toggle >}}
 
-Only the content under `posts/` will have the new URL structure. For example, the file `content/posts/sample-entry.md` with `date: 2017-02-27T19:20:00-05:00` in its front matter will render to `public/2017/02/sample-entry/index.html` at build time and therefore be reachable at `https://example.com/2017/02/sample-entry/`.
+The resulting URL will be:
 
-To configure the `permalinks` option for pages in the "root" section, use **/** as the key:
+```text
+https://example.org/posts/my-first-post/
+```
 
-{{< code-toggle file="config" copy="false" >}}
-permalinks:
-  /: /:year/:month/:filename/
+{{< new-in 0.167.0 />}}
+
+When you set the `slug` on a `section`, `taxonomy`, or `term` page, Hugo applies it to the URLs of the pages beneath it, including their [page resources][]. For example:
+
+{{< code-toggle file=content/products/_index.md fm=true >}}
+title = 'Products'
+slug = 'shop'
 {{< /code-toggle >}}
 
-If the standard date-based permalink configuration does not meet your needs, you can also format URL segments using [Go time formatting directives](https://golang.org/pkg/time/#Time.Format). For example, a URL structure with two digit years and month and day digits without zero padding can be accomplished with:
+The resulting URLs will be:
 
-{{< code-toggle file="config" copy="false" >}}
-permalinks:
-  posts: /:06/:1/:2/:title/
+```text
+content/products/_index.md             → https://example.org/shop/
+content/products/electronics/_index.md → https://example.org/shop/electronics/
+content/products/electronics/tv.md     → https://example.org/shop/electronics/tv/
+```
+
+A matching [permalink pattern][configure permalinks] takes precedence over slugs inherited from ancestor pages.
+
+### URL
+
+Set the `url` in front matter to override the entire path. This front matter field is not applicable to the `home` page.
+
+Unlike the `slug`, the `url` of a `section`, `taxonomy`, or `term` page does not affect the URLs of the pages beneath it.
+
+> [!NOTE]
+> Hugo does not sanitize the `url` front matter field, allowing you to generate:
+>
+> - File paths that contain characters reserved by the operating system. For example, file paths on Windows may not contain any of these [reserved characters][]. Hugo throws an error if a file path includes a character reserved by the current operating system.
+> - URLs that contain disallowed characters. For example, the less than sign (`<`) is not allowed in a URL.
+
+If you set both `slug` and `url` in front matter, the `url` value takes precedence.
+
+#### Include a colon
+
+If you need to include a colon in the  `url` front matter field, escape it with backslash characters. Use one backslash if you wrap the string within single quotes, or use two backslashes if you wrap the string within double quotes. With YAML front matter, use a single backslash if you omit quotation marks.
+
+For example, with this front matter:
+
+{{< code-toggle file=content/example.md fm=true >}}
+title: Example
+url: "my\\:example"
 {{< /code-toggle >}}
 
-You can also configure permalinks of taxonomies with the same syntax, by using the plural form of the taxonomy instead of the section. You will probably only want to use the configuration values `:slug` or `:title`.
+The resulting URL will be:
 
-### Permalink Configuration Values
+```text
+https://example.org/my:example/
+```
 
-The following is a list of values that can be used in a `permalink` definition in your site `config` file. All references to time are dependent on the content's date.
+As described above, this will fail on Windows because the colon (`:`) is a reserved character.
 
-`:year`
-: the 4-digit year
+#### File extensions
 
-`:month`
-: the 2-digit month
+With this front matter:
 
-`:monthname`
-: the name of the month
+{{< code-toggle file=content/posts/post-1.md fm=true >}}
+title = 'My First Article'
+url = 'articles/my-first-article'
+{{< /code-toggle >}}
 
-`:day`
-: the 2-digit day
+The resulting URL will be:
 
-`:weekday`
-: the 1-digit day of the week (Sunday = 0)
+```text
+https://example.org/articles/my-first-article/
+```
 
-`:weekdayname`
-: the name of the day of the week
+If you include a file extension:
 
-`:yearday`
-: the 1- to 3-digit day of the year
+{{< code-toggle file=content/posts/post-1.md fm=true >}}
+title = 'My First Article'
+url = 'articles/my-first-article.html'
+{{< /code-toggle >}}
 
-`:section`
-: the content's section
+The resulting URL will be:
 
-`:sections`
-: the content's sections hierarchy. {{< new-in "0.83.0" >}} Since Hugo 0.83 you can use a selection of the sections using _slice syntax_: `:sections[1:]` includes all but the first, `:sections[:last]` includes all but the last, `:sections[last]` includes only the last, `:sections[1:2]` includes section 2 and 3. Note that this slice access will not throw any out-of-bounds errors, so you don't have to be exact.
+```text
+https://example.org/articles/my-first-article.html
+```
 
-`:title`
-: the content's title
+#### Leading slashes
 
-`:slug`
-: the content's slug (or title if no slug is provided in the front matter)
+With monolingual projects, `url` values with or without a leading slash are relative to the [`baseURL`][]. With multilingual projects, `url` values with a leading slash are relative to the `baseURL`, and  `url` values without a leading slash are relative to the `baseURL` plus the language prefix.
 
-`:filename`
-: the content's filename (without extension)
+Site type|Front matter `url`|Resulting URL
+:--|:--|:--
+monolingual|`/about`|`https://example.org/about/`
+monolingual|`about`|`https://example.org/about/`
+multilingual|`/about`|`https://example.org/about/`
+multilingual|`about`|`https://example.org/de/about/`
 
-Additionally, a Go time format string prefixed with `:` may be used.
+#### Tokens
+
+You can also use tokens when setting the `url` value. This is typically used in `cascade` sections:
+
+{{< code-toggle file=content/foo/bar/_index.md fm=true >}}
+title ='Bar'
+[[cascade]]
+  url = '/:sections[last]/:slug'
+{{< /code-toggle >}}
+
+Use any of these tokens:
+
+{{% include "/_common/permalink-tokens.md" %}}
+
+## Project configuration
+
+Configure permalinks, URL appearance, and post-processing in your project configuration.
+
+### Permalinks
+
+See [configure permalinks][].
+
+### Appearance
+
+See [configure ugly URLs](/configuration/ugly-urls/).
+
+### Post-processing
+
+Hugo provides two mutually exclusive configuration settings to alter URLs _after_ it renders a page.
+
+#### Canonical URLs
+
+> [!CAUTION]
+> This is a legacy configuration setting, superseded by template functions and Markdown render hooks, and will likely be [removed in a future release][].
+{class="!mt-6"}
+
+If enabled, Hugo performs a search and replace _after_ it renders the page. It searches for site-relative URLs (those with a leading slash) associated with `action`, `href`, `src`, `srcset`, and `url` attributes. It then prepends the `baseURL` to create absolute URLs.
+
+```html
+<a href="/about"> → <a href="https://example.org/about/">
+<img src="/a.gif"> → <img src="https://example.org/a.gif">
+```
+
+This is an imperfect, brute force approach that can affect content as well as HTML attributes. As noted above, this is a legacy configuration setting that will likely be removed in a future release.
+
+To enable:
+
+{{< code-toggle file=hugo >}}
+canonifyURLs = true
+{{< /code-toggle >}}
+
+#### Relative URLs
+
+> [!CAUTION]
+> Do not enable this option unless you are creating a serverless site, navigable via the file system.
+{class="!mt-6"}
+
+If enabled, Hugo performs a search and replace _after_ it renders the page. It searches for site-relative URLs (those with a leading slash) associated with `action`, `href`, `src`, `srcset`, and `url` attributes. It then transforms the URL to be relative to the current page.
+
+For example, when rendering `content/posts/post-1`:
+
+```html
+<a href="/about"> → <a href="../../about">
+<img src="/a.gif"> → <img src="../../a.gif">
+```
+
+This is an imperfect, brute force approach that can affect content as well as HTML attributes. As noted above, do not enable this option unless you are creating a serverless site.
+
+To enable:
+
+{{< code-toggle file=hugo >}}
+relativeURLs = true
+{{< /code-toggle >}}
 
 ## Aliases
 
-Aliases can be used to create redirects to your page from other URLs.
+Aliases allow you to redirect old URLs to new URLs. This is essential for preventing broken links and ensuring that existing bookmarks or external links continue to function when you rename or move content.
 
-Aliases comes in two forms:
+### Defining aliases
 
-1. Starting with a `/` meaning they are relative to the `BaseURL`, e.g. `/posts/my-blogpost/`
-2. They are relative to the `Page` they're defined in, e.g. `my-blogpost` or even something like `../blog/my-blogpost` (new in Hugo 0.55).
+To add redirects to a page, list the previous paths in the [`aliases`][aliases_field] field in your front matter. Hugo resolves these to [server-relative](g) paths during the build process, accounting for the [`baseURL`][] and [content dimension](g) prefixes such as language, version, or role.
 
-### Example: Aliases
+{{< code-toggle file=content/examples/example-1.en.md fm=true >}}
+title = 'Example 1'
+date = 2025-02-02
+aliases = ['/old-url', 'old-name', '../old/path']
+{{< /code-toggle >}}
 
-Let's assume you create a new piece of content at `content/posts/my-awesome-blog-post.md`. The content is a revision of your previous post at `content/posts/my-original-url.md`. You can create an `aliases` field in the front matter of your new `my-awesome-blog-post.md` where you can add previous paths. The following examples show how to create this field in TOML and YAML front matter, respectively.
+As shown in the example above, you can use [site-relative](g) paths or [page-relative](g) paths. Page-relative paths can also include directory traversal. Using the file `content/examples/example-1.en.md` as a reference point, here is how Hugo interprets those different path types:
 
-#### TOML Front Matter
+Path type|Alias|Server-relative path
+:--|:--|:--
+site-relative|`/old-url`|`/en/old-url/`
+page-relative|`old-name`|`/en/examples/old-name/`
+page-relative|`../old/path`|`/en/old/path/`
 
-{{< code file="content/posts/my-awesome-post.md" copy="false" >}}
-+++
-aliases = [
-    "/posts/my-original-url/",
-    "/2010/01/01/even-earlier-url.html"
-]
-+++
-{{< /code >}}
+### Redirection methods
 
-#### YAML Front Matter
+There are two ways to implement aliases depending on your hosting environment and preferences: client-side redirection and server-side redirection.
 
-{{< code file="content/posts/my-awesome-post.md" copy="false" >}}
----
-aliases:
-    - /posts/my-original-url/
-    - /2010/01/01/even-earlier-url.html
----
-{{< /code >}}
+> [!NOTE]
+> Alias data is only generated for [output formats](g) where both [`isHTML`][] and [`permalinkable`][] are `true`. This affects both the creation of client-side redirect files and the results returned by the [`Aliases`][aliases_method] method used in server-side redirection.
 
-Now when you visit any of the locations specified in aliases---i.e., *assuming the same site domain*---you'll be redirected to the page they are specified on. For example, a visitor to `example.com/posts/my-original-url/` will be immediately redirected to `example.com/posts/my-awesome-post/`.
+#### Client-side redirection
 
-### Example: Aliases in Multilingual
+By default, Hugo uses client-side redirection, generating a small HTML file for every alias. This file contains a `meta http-equiv="refresh"` tag that instructs the browser to navigate to the new URL. This approach is portable across all hosting providers.
 
-On [multilingual sites][multilingual], each translation of a post can have unique aliases. To use the same alias across multiple languages, prefix it with the language code.
+When using this method, Hugo creates a physical directory and an `index.html` file at each alias location. For example, if a page at `content/posts/new.md` has a page-relative alias of `old-path`, a file is generated at `public/posts/old-path/index.html`.
 
-In `/posts/my-new-post.es.md`:
+Unless you provide a custom layout, Hugo uses its [embedded alias template][] to generate the redirect files:
 
-```
----
-aliases:
-    - /es/posts/my-original-post/
----
-```
-
-From Hugo 0.55 you can also have page-relative aliases, so ` /es/posts/my-original-post/` can be simplified to the more portable `my-original-post/`
-
-### How Hugo Aliases Work
-
-When aliases are specified, Hugo creates a directory to match the alias entry. Inside the directory, Hugo creates an `.html` file specifying the canonical URL for the page and the new redirect target.
-
-For example, a content file at `posts/my-intended-url.md` with the following in the front matter:
-
-```
----
-title: My New post
-aliases: [/posts/my-old-url/]
----
-```
-
-Assuming a `baseURL` of `example.com`, the contents of the auto-generated alias `.html` found at `https://example.com/posts/my-old-url/` will contain the following:
-
-```
+```go-html-template
 <!DOCTYPE html>
-<html>
+<html lang="{{ site.Language.Locale }}">
   <head>
-    <title>https://example.com/posts/my-intended-url</title>
-    <link rel="canonical" href="https://example.com/posts/my-intended-url"/>
-    <meta name="robots" content="noindex">
-    <meta http-equiv="content-type" content="text/html; charset=utf-8"/>
-    <meta http-equiv="refresh" content="0; url=https://example.com/posts/my-intended-url"/>
+    <title>{{ .Permalink }}</title>
+    {{ with .OutputFormats.Canonical }}<link rel="{{ .Rel }}" href="{{ .Permalink }}">{{ end }}
+    <meta charset="utf-8">
+    <meta http-equiv="refresh" content="0; url={{ .Permalink }}">
   </head>
 </html>
 ```
 
-The `http-equiv="refresh"` line is what performs the redirect, in 0 seconds in this case. If an end user of your website goes to `https://example.com/posts/my-old-url`, they will now be automatically redirected to the newer, correct URL. The addition of `<meta name="robots" content="noindex">` lets search engine bots know that they should not crawl and index your new alias page.
-
-### Customize
-You may customize this alias page by creating an `alias.html` template in the
-layouts folder of your site (i.e., `layouts/alias.html`). In this case, the data passed to the template is
+To override this, create a file named `alias.html` in your `layouts` directory. This custom template has access to the following context:
 
 `Permalink`
-: the link to the page being aliased
+: (`string`) The absolute URL of the destination page.
 
 `Page`
-: the Page data for the page being aliased
+: (`page.Page`) The full `Page` object of the destination.
 
-### Important Behaviors of Aliases
+#### Server-side redirection
 
-1. Hugo makes no assumptions about aliases. They also do not change based
-on your UglyURLs setting. You need to provide absolute paths to your web root
-and the complete filename or directory.
-2. Aliases are rendered *before* any content are rendered and therefore will be overwritten by any content with the same location.
+Alternatively, you can implement server-side redirection by using the [`Aliases`][aliases_method] method on a `Page` object to generate a single configuration file that the web server processes. This method is more efficient because the redirect happens at the HTTP header level before any page content is processed, whereas a meta refresh requires the browser to download and parse the HTML body before acting. Additionally, server-side redirection improves build and deployment times because Hugo doesn't need to write a physical directory and HTML file for every alias.
 
-## Pretty URLs
+To implement this, you typically create one template to generate the necessary rules for your specific host or server. Common examples include:
 
-Hugo's default behavior is to render your content with "pretty" URLs. No non-standard server-side configuration is required for these pretty URLs to work.
+- A `_redirects` file for hosting services such as Cloudflare, GitLab Pages, and Netlify.
+- An `.htaccess` file for web servers such as Apache and LiteSpeed.
 
-The following demonstrates the concept:
+See the [`Aliases`][aliases_method] method page for a complete example of how to iterate through pages to generate these rules.
 
-```
-content/posts/_index.md
-=> example.com/posts/
-content/posts/post-1.md
-=> example.com/posts/post-1/
-```
+If you implement server-side redirects, you should disable the generation of individual HTML files by setting [`disableAliases`][] to `true` in your project configuration. This setting only prevents the generation of the physical HTML files; the `Aliases` method on a `Page` object remains available for use in your configuration templates.
 
-## Ugly URLs
-
-If you would like to have what are often referred to as "ugly URLs" (e.g., example.com/urls.html), set `uglyurls = true` or `uglyurls: true` in your site's `config.toml` or `config.yaml`, respectively. You can also set the `HUGO_UGLYURLS` environment variable to `true` when running `hugo` or `hugo server`.
-
-If you want a specific piece of content to have an exact URL, you can specify this in the [front matter][] under the `url` key. The following are examples of the same content directory and what the eventual URL structure will be when Hugo runs with its default behavior.
-
-See [Content Organization][contentorg] for more details on paths.
-
-```
-.
-└── content
-    └── about
-    |   └── _index.md  // <- https://example.com/about/
-    ├── posts
-    |   ├── firstpost.md   // <- https://example.com/posts/firstpost/
-    |   ├── happy
-    |   |   └── ness.md  // <- https://example.com/posts/happy/ness/
-    |   └── secondpost.md  // <- https://example.com/posts/secondpost/
-    └── quote
-        ├── first.md       // <- https://example.com/quote/first/
-        └── second.md      // <- https://example.com/quote/second/
-```
-
-Here's the same organization run with `hugo --uglyURLs`:
-
-```
-.
-└── content
-    └── about
-    |   └── _index.md  // <- https://example.com/about.html
-    ├── posts
-    |   ├── firstpost.md   // <- https://example.com/posts/firstpost.html
-    |   ├── happy
-    |   |   └── ness.md    // <- https://example.com/posts/happy/ness.html
-    |   └── secondpost.md  // <- https://example.com/posts/secondpost.html
-    └── quote
-        ├── first.md       // <- https://example.com/quote/first.html
-        └── second.md      // <- https://example.com/quote/second.html
-```
-
-
-## Canonicalization
-
-By default, all relative URLs encountered in the input are left unmodified, e.g. `/css/foo.css` would stay as `/css/foo.css`. The `canonifyURLs` field in your site `config` has a default value of `false`.
-
-By setting `canonifyURLs` to `true`, all relative URLs would instead be *canonicalized* using `baseURL`.  For example, assuming you have `baseURL = https://example.com/`, the relative URL `/css/foo.css` would be turned into the absolute URL `https://example.com/css/foo.css`.
-
-Benefits of canonicalization include fixing all URLs to be absolute, which may aid with some parsing tasks. Note, however, that all modern browsers handle this on the client without issue.
-
-Benefits of non-canonicalization include being able to have scheme-relative resource inclusion; e.g., so that `http` vs `https` can be decided according to how the page was retrieved.
-
-{{% note "`canonifyURLs` default change" %}}
-In the May 2014 release of Hugo v0.11, the default value of `canonifyURLs` was switched from `true` to `false`, which we think is the better default and should continue to be the case going forward. Please verify and adjust your website accordingly if you are upgrading from v0.10 or older versions.
-{{% /note %}}
-
-To find out the current value of `canonifyURLs` for your website, you may use the handy `hugo config` command added in v0.13.
-
-```
-hugo config | grep -i canon
-```
-
-Or, if you are on Windows and do not have `grep` installed:
-
-```
-hugo config | FINDSTR /I canon
-```
-
-## Set URL in Front Matter
-
-In addition to specifying permalink values in your site configuration for different content sections, Hugo provides even more granular control for individual pieces of content.
-
-Both `slug` and `url` can be defined in individual front matter. For more information on content destinations at build time, see [Content Organization][contentorg].
-
-From Hugo 0.55, you can use URLs relative to the current site context (the language), which makes it simpler to maintain. For a Japanese translation, both of the following examples would get the same URL:
-
-```markdown
----
-title: "Custom URL!"
-url: "/jp/custom/foo"
----
-```
-
-```markdown
----
-title: "Custom URL!"
-url: "custom/foo"
----
-```
-
-
-## Relative URLs
-
-By default, all relative URLs are left unchanged by Hugo, which can be problematic when you want to make your site browsable from a local file system.
-
-Setting `relativeURLs` to `true` in your [site configuration][config] will cause Hugo to rewrite all relative URLs to be relative to the current content.
-
-For example, if your `/posts/first/` page contains a link to `/about/`, Hugo will rewrite the URL to `../../about/`.
-
-[config]: /getting-started/configuration/
-[contentorg]: /content-management/organization/
-[front matter]: /content-management/front-matter/
-[multilingual]: /content-management/multilingual/
-[sections]: /content-management/sections/
-[usage]: /getting-started/usage/
+[`baseURL`]: /configuration/all/#baseurl
+[`disableAliases`]: /configuration/all/#disablealiases
+[`isHTML`]: /configuration/output-formats/#ishtml
+[`permalinkable`]: /configuration/output-formats/#permalinkable
+[aliases_field]: /content-management/front-matter/#aliases
+[aliases_method]: /methods/page/aliases/
+[configure permalinks]: /configuration/permalinks/
+[embedded alias template]: <{{% eturl alias %}}>
+[page resources]: /content-management/page-resources/
+[removed in a future release]: https://github.com/gohugoio/hugo/issues/4733
+[reserved characters]: https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file#naming-conventions

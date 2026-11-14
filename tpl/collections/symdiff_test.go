@@ -17,8 +17,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/gohugoio/hugo/deps"
-
 	qt "github.com/frankban/quicktest"
 )
 
@@ -27,7 +25,7 @@ func TestSymDiff(t *testing.T) {
 
 	c := qt.New(t)
 
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	s1 := []TstX{{A: "a"}, {A: "b"}}
 	s2 := []TstX{{A: "a"}, {A: "e"}}
@@ -38,13 +36,13 @@ func TestSymDiff(t *testing.T) {
 	sp2 := []*StructWithSlice{xb, xe}
 
 	for i, test := range []struct {
-		s1       interface{}
-		s2       interface{}
-		expected interface{}
+		s1       any
+		s2       any
+		expected any
 	}{
 		{[]string{"a", "x", "b", "c"}, []string{"a", "b", "y", "c"}, []string{"x", "y"}},
 		{[]string{"a", "b", "c"}, []string{"a", "b", "c"}, []string{}},
-		{[]interface{}{"a", "b", nil}, []interface{}{"a"}, []interface{}{"b", nil}},
+		{[]any{"a", "b", nil}, []any{"a"}, []any{"b", nil}},
 		{[]int{1, 2, 3}, []int{3, 4}, []int{1, 2, 4}},
 		{[]int{1, 2, 3}, []int64{3, 4}, []int{1, 2, 4}},
 		{s1, s2, []TstX{{A: "b"}, {A: "e"}}},
@@ -56,7 +54,6 @@ func TestSymDiff(t *testing.T) {
 	} {
 
 		errMsg := qt.Commentf("[%d]", i)
-
 		result, err := ns.SymDiff(test.s2, test.s1)
 
 		if b, ok := test.expected.(bool); ok && !b {

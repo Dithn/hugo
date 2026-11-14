@@ -25,10 +25,10 @@ func TestTruncate(t *testing.T) {
 
 	var err error
 	cases := []struct {
-		v1    interface{}
-		v2    interface{}
-		v3    interface{}
-		want  interface{}
+		v1    any
+		v2    any
+		v3    any
+		want  any
 		isErr bool
 	}{
 		{10, "I am a test sentence", nil, template.HTML("I am a …"), false},
@@ -41,12 +41,48 @@ func TestTruncate(t *testing.T) {
 		{10, template.HTML("<p>IamanextremelylongwordthatjustgoesonandonandonjusttoannoyyoualmostasifIwaswritteninGermanActuallyIbettheresagermanwordforthis</p>"), nil, template.HTML("<p>Iamanextre …</p>"), false},
 		{13, template.HTML("With <a href=\"/markdown\">Markdown</a> inside."), nil, template.HTML("With <a href=\"/markdown\">Markdown …</a>"), false},
 		{14, "Hello中国 Good 好的", nil, template.HTML("Hello中国 Good 好 …"), false},
+		{12, "", "日本語でHugoを使います", template.HTML("日本語でHugoを使いま"), false},
+		{12, "", "日本語で Hugo を使います", template.HTML("日本語で Hugo を使"), false},
+		{8, "", "日本語でHugoを使います", template.HTML("日本語でHugo"), false},
+		{10, "", "日本語で Hugo を使います", template.HTML("日本語で Hugo"), false},
+		{9, "", "日本語で Hugo を使います", template.HTML("日本語で Hugo"), false},
+		{7, "", "日本語でHugoを使います", template.HTML("日本語で"), false},
+		{7, "", "日本語で Hugo を使います", template.HTML("日本語で"), false},
+		{6, "", "日本語でHugoを使います", template.HTML("日本語で"), false},
+		{6, "", "日本語で Hugo を使います", template.HTML("日本語で"), false},
+		{5, "", "日本語でHugoを使います", template.HTML("日本語で"), false},
+		{5, "", "日本語で Hugo を使います", template.HTML("日本語で"), false},
+		{4, "", "日本語でHugoを使います", template.HTML("日本語で"), false},
+		{4, "", "日本語で Hugo を使います", template.HTML("日本語で"), false},
 		{15, "", template.HTML("A <br> tag that's not closed"), template.HTML("A <br> tag that's"), false},
 		{14, template.HTML("<p>Hello中国 Good 好的</p>"), nil, template.HTML("<p>Hello中国 Good 好 …</p>"), false},
 		{2, template.HTML("<p>P1</p><p>P2</p>"), nil, template.HTML("<p>P1 …</p>"), false},
 		{3, template.HTML(strings.Repeat("<p>P</p>", 20)), nil, template.HTML("<p>P</p><p>P</p><p>P …</p>"), false},
 		{18, template.HTML("<p>test <b>hello</b> test something</p>"), nil, template.HTML("<p>test <b>hello</b> test …</p>"), false},
 		{4, template.HTML("<p>a<b><i>b</b>c d e</p>"), nil, template.HTML("<p>a<b><i>b</b>c …</p>"), false},
+		{3, template.HTML("<p>a<wbr>b c d</p>"), nil, template.HTML("<p>a<wbr>b …</p>"), false},
+		{3, template.HTML("<p><source src=a>b <track src=a>c <embed src=a>d e</p>"), nil, template.HTML("<p><source src=a>b <track src=a>c …</p>"), false},
+		{3, template.HTML("<p>a <!-- raw HTML omitted -->b c d</p>"), nil, template.HTML("<p>a <!-- raw HTML omitted -->b …</p>"), false},
+		{3, template.HTML("<p>a <span title='x > y'>b</span> c d</p>"), nil, template.HTML("<p>a <span title='x > y'>b …</span></p>"), false},
+		{3, template.HTML("<p>a <script>var b = '<i>';</script>b c d</p>"), nil, template.HTML("<p>a <script>var b = '<i>';</script>b …</p>"), false},
+		{9, template.HTML("<P>I <3 Hugo very much</P>"), nil, template.HTML("<P>I <3 Hugo …</p>"), false},
+		{
+			42,
+			template.HTML(`With strangely formatted
+							<a
+							href="#"
+								target="_blank"
+							>HTML</a
+							>
+							inside.`),
+			nil,
+			template.HTML(`With strangely formatted
+							<a
+							href="#"
+								target="_blank"
+							>HTML …</a>`),
+			false,
+		},
 		{10, nil, nil, template.HTML(""), true},
 		{nil, nil, nil, template.HTML(""), true},
 	}
@@ -80,4 +116,18 @@ func TestTruncate(t *testing.T) {
 	if err == nil {
 		t.Errorf("Should have errored")
 	}
+}
+
+func BenchmarkTruncate(b *testing.B) {
+	b.Run("Plain text", func(b *testing.B) {
+		for b.Loop() {
+			ns.Truncate(10, "I am a test sentence")
+		}
+	})
+
+	b.Run("With link", func(b *testing.B) {
+		for b.Loop() {
+			ns.Truncate(10, "I have a <a href='/markdown'>Markdown link</a> inside")
+		}
+	})
 }

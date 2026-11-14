@@ -21,13 +21,11 @@ import (
 
 var ns = New()
 
-type tstNoStringer struct{}
-
 func TestIsMap(t *testing.T) {
 	c := qt.New(t)
 	for _, test := range []struct {
-		v      interface{}
-		expect interface{}
+		v      any
+		expect any
 	}{
 		{map[int]int{1: 1}, true},
 		{"foo", false},
@@ -41,8 +39,8 @@ func TestIsMap(t *testing.T) {
 func TestIsSlice(t *testing.T) {
 	c := qt.New(t)
 	for _, test := range []struct {
-		v      interface{}
-		expect interface{}
+		v      any
+		expect any
 	}{
 		{[]int{1, 2}, true},
 		{"foo", false},

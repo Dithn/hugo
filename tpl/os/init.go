@@ -14,6 +14,8 @@
 package os
 
 import (
+	"context"
+
 	"github.com/gohugoio/hugo/deps"
 	"github.com/gohugoio/hugo/tpl/internal"
 )
@@ -26,8 +28,15 @@ func init() {
 
 		ns := &internal.TemplateFuncsNamespace{
 			Name:    name,
-			Context: func(args ...interface{}) (interface{}, error) { return ctx, nil },
+			Context: func(cctx context.Context, args ...any) (any, error) { return ctx, nil },
 		}
+
+		ns.AddMethodMapping(ctx.FileExists,
+			[]string{"fileExists"},
+			[][2]string{
+				{`{{ fileExists "foo.txt" }}`, `false`},
+			},
+		)
 
 		ns.AddMethodMapping(ctx.Getenv,
 			[]string{"getenv"},
@@ -48,11 +57,9 @@ func init() {
 			},
 		)
 
-		ns.AddMethodMapping(ctx.FileExists,
-			[]string{"fileExists"},
-			[][2]string{
-				{`{{ fileExists "foo.txt" }}`, `false`},
-			},
+		ns.AddMethodMapping(ctx.Stat,
+			nil,
+			[][2]string{},
 		)
 
 		return ns

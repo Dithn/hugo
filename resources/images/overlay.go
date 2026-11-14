@@ -18,7 +18,7 @@ import (
 	"image"
 	"image/draw"
 
-	"github.com/disintegration/gift"
+	"github.com/gohugoio/gift"
 )
 
 var _ gift.Filter = (*overlayFilter)(nil)

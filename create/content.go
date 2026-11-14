@@ -16,20 +16,17 @@ package create
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/gohugoio/hugo/hugofs/glob"
-
 	"github.com/gohugoio/hugo/common/hexec"
 	"github.com/gohugoio/hugo/common/paths"
-
-	"github.com/pkg/errors"
-
-	"github.com/gohugoio/hugo/hugofs/files"
+	"github.com/gohugoio/hugo/hugofs/hglob"
 
 	"github.com/gohugoio/hugo/hugofs"
 
@@ -39,10 +36,10 @@ import (
 )
 
 const (
-	// DefaultArchetypeTemplateTemplate is the template used in 'hugo new site'
+	// DefaultArchetypeTemplateTemplate is the template used in 'hugo new project'
 	// and the template we use as a fall back.
 	DefaultArchetypeTemplateTemplate = `---
-title: "{{ replace .Name "-" " " | title }}"
+title: "{{ replace .File.ContentBaseName "-" " " | title }}"
 date: {{ .Date }}
 draft: true
 ---
@@ -52,8 +49,8 @@ draft: true
 
 // NewContent creates a new content file in h (or a full bundle if the archetype is a directory)
 // in targetPath.
-func NewContent(h *hugolib.HugoSites, kind, targetPath string) error {
-	if h.BaseFs.Content.Dirs == nil {
+func NewContent(h *hugolib.HugoSites, kind, targetPath string, force bool) error {
+	if _, err := h.BaseFs.Content.Fs.Stat(""); err != nil {
 		return errors.New("no existing content directory configured for this project")
 	}
 
@@ -76,6 +73,7 @@ func NewContent(h *hugolib.HugoSites, kind, targetPath string) error {
 
 		kind:       kind,
 		targetPath: targetPath,
+		force:      force,
 	}
 
 	ext := paths.Ext(targetPath)
@@ -83,26 +81,27 @@ func NewContent(h *hugolib.HugoSites, kind, targetPath string) error {
 	b.setArcheTypeFilenameToUse(ext)
 
 	withBuildLock := func() (string, error) {
-		unlock, err := h.BaseFs.LockBuild()
-		if err != nil {
-			return "", fmt.Errorf("failed to acquire a build lock: %s", err)
+		if !h.Configs.Base.NoBuildLock {
+			unlock, err := h.BaseFs.LockBuild()
+			if err != nil {
+				return "", fmt.Errorf("failed to acquire a build lock: %s", err)
+			}
+			defer unlock()
 		}
-		defer unlock()
 
 		if b.isDir {
 			return "", b.buildDir()
 		}
 
 		if ext == "" {
-			return "", errors.Errorf("failed to resolve %q to a archetype template", targetPath)
+			return "", fmt.Errorf("failed to resolve %q to an archetype template", targetPath)
 		}
 
-		if !files.IsContentFile(b.targetPath) {
-			return "", errors.Errorf("target path %q is not a known content format", b.targetPath)
+		if !h.Conf.ContentTypes().IsContentFile(b.targetPath) {
+			return "", fmt.Errorf("target path %q is not a known content format", b.targetPath)
 		}
 
 		return b.buildFile()
-
 	}
 
 	filename, err := withBuildLock()
@@ -115,7 +114,6 @@ func NewContent(h *hugolib.HugoSites, kind, targetPath string) error {
 	}
 
 	return nil
-
 }
 
 type contentBuilder struct {
@@ -127,11 +125,12 @@ type contentBuilder struct {
 	cf hugolib.ContentFactory
 
 	// Builder state
-	archetypeFilename string
-	targetPath        string
-	kind              string
-	isDir             bool
-	dirMap            archetypeMap
+	archetypeFi hugofs.FileMetaInfo
+	targetPath  string
+	kind        string
+	isDir       bool
+	dirMap      archetypeMap
+	force       bool
 }
 
 func (b *contentBuilder) buildDir() error {
@@ -144,8 +143,11 @@ func (b *contentBuilder) buildDir() error {
 	var baseDir string
 
 	for _, fi := range b.dirMap.contentFiles {
-		targetFilename := filepath.Join(b.targetPath, strings.TrimPrefix(fi.Meta().Path, b.archetypeFilename))
-		abs, err := b.cf.CreateContentPlaceHolder(targetFilename)
+
+		targetFilename := filepath.Join(b.targetPath, strings.TrimPrefix(fi.Meta().PathInfo.Path(), b.archetypeFi.Meta().PathInfo.Path()))
+
+		// ===> post/my-post/pages/bio.md
+		abs, err := b.cf.CreateContentPlaceHolder(targetFilename, b.force)
 		if err != nil {
 			return err
 		}
@@ -156,19 +158,17 @@ func (b *contentBuilder) buildDir() error {
 		contentTargetFilenames = append(contentTargetFilenames, abs)
 	}
 
-	var contentInclusionFilter *glob.FilenameFilter
+	var contentInclusionFilter *hglob.FilenameFilter
 	if !b.dirMap.siteUsed {
 		// We don't need to build everything.
-		contentInclusionFilter = glob.NewFilenameFilterForInclusionFunc(func(filename string) bool {
-			filename = strings.TrimPrefix(filename, string(os.PathSeparator))
+		contentInclusionFilter = hglob.NewFilenameFilterForInclusionFunc(func(filename string) bool {
 			for _, cn := range contentTargetFilenames {
-				if strings.Contains(cn, filename) {
+				if strings.HasSuffix(cn, filename) {
 					return true
 				}
 			}
 			return false
 		})
-
 	}
 
 	if err := b.h.Build(hugolib.BuildCfg{NoBuildLock: true, SkipRender: true, ContentInclusionFilter: contentInclusionFilter}); err != nil {
@@ -176,26 +176,24 @@ func (b *contentBuilder) buildDir() error {
 	}
 
 	for i, filename := range contentTargetFilenames {
-		if err := b.applyArcheType(filename, b.dirMap.contentFiles[i].Meta().Path); err != nil {
+		if err := b.applyArcheType(filename, b.dirMap.contentFiles[i]); err != nil {
 			return err
 		}
 	}
 
 	// Copy the rest as is.
-	for _, f := range b.dirMap.otherFiles {
-		meta := f.Meta()
-		filename := meta.Path
+	for _, fi := range b.dirMap.otherFiles {
+		meta := fi.Meta()
 
 		in, err := meta.Open()
 		if err != nil {
-			return errors.Wrap(err, "failed to open non-content file")
+			return fmt.Errorf("failed to open non-content file: %w", err)
 		}
-
-		targetFilename := filepath.Join(baseDir, b.targetPath, strings.TrimPrefix(filename, b.archetypeFilename))
+		targetFilename := filepath.Join(baseDir, b.targetPath, strings.TrimPrefix(fi.Meta().Filename, b.archetypeFi.Meta().Filename))
 		targetDir := filepath.Dir(targetFilename)
 
 		if err := b.sourceFs.MkdirAll(targetDir, 0o777); err != nil && !os.IsExist(err) {
-			return errors.Wrapf(err, "failed to create target directory for %q", targetDir)
+			return fmt.Errorf("failed to create target directory for %q: %w", targetDir, err)
 		}
 
 		out, err := b.sourceFs.Create(targetFilename)
@@ -218,30 +216,39 @@ func (b *contentBuilder) buildDir() error {
 }
 
 func (b *contentBuilder) buildFile() (string, error) {
-	contentPlaceholderAbsFilename, err := b.cf.CreateContentPlaceHolder(b.targetPath)
+	contentPlaceholderAbsFilename, err := b.cf.CreateContentPlaceHolder(b.targetPath, b.force)
+	if err != nil {
+		if fi, serr := b.sourceFs.Stat(contentPlaceholderAbsFilename); serr == nil && !fi.IsDir() {
+			return "", errTargetConflict(contentPlaceholderAbsFilename)
+		}
+		return "", err
+	}
+
+	usesSite, err := b.usesSiteVar(b.archetypeFi)
 	if err != nil {
 		return "", err
 	}
 
-	usesSite, err := b.usesSiteVar(b.archetypeFilename)
-	if err != nil {
-		return "", err
-	}
-
-	var contentInclusionFilter *glob.FilenameFilter
+	var contentInclusionFilter *hglob.FilenameFilter
 	if !usesSite {
 		// We don't need to build everything.
-		contentInclusionFilter = glob.NewFilenameFilterForInclusionFunc(func(filename string) bool {
-			filename = strings.TrimPrefix(filename, string(os.PathSeparator))
-			return strings.Contains(contentPlaceholderAbsFilename, filename)
+		contentInclusionFilter = hglob.NewFilenameFilterForInclusionFunc(func(filename string) bool {
+			return strings.HasSuffix(contentPlaceholderAbsFilename, filename)
 		})
+	}
+
+	// If a directory with the target's name (sans extension) exists, this file
+	// would produce a URL conflict with the existing section or leaf bundle.
+	targetDir := strings.TrimSuffix(contentPlaceholderAbsFilename, filepath.Ext(contentPlaceholderAbsFilename))
+	if fi, err := b.sourceFs.Stat(targetDir); err == nil && fi.IsDir() {
+		return "", errTargetConflict(contentPlaceholderAbsFilename)
 	}
 
 	if err := b.h.Build(hugolib.BuildCfg{NoBuildLock: true, SkipRender: true, ContentInclusionFilter: contentInclusionFilter}); err != nil {
 		return "", err
 	}
 
-	if err := b.applyArcheType(contentPlaceholderAbsFilename, b.archetypeFilename); err != nil {
+	if err := b.applyArcheType(contentPlaceholderAbsFilename, b.archetypeFi); err != nil {
 		return "", err
 	}
 
@@ -262,18 +269,21 @@ func (b *contentBuilder) setArcheTypeFilenameToUse(ext string) {
 	for _, p := range pathsToCheck {
 		fi, err := b.archeTypeFs.Stat(p)
 		if err == nil {
-			b.archetypeFilename = p
+			b.archetypeFi = fi.(hugofs.FileMetaInfo)
 			b.isDir = fi.IsDir()
 			return
 		}
 	}
-
 }
 
-func (b *contentBuilder) applyArcheType(contentFilename, archetypeFilename string) error {
+func errTargetConflict(path string) error {
+	return fmt.Errorf("no page found for %q; the target path conflicts with existing content", path)
+}
+
+func (b *contentBuilder) applyArcheType(contentFilename string, archetypeFi hugofs.FileMetaInfo) error {
 	p := b.h.GetContentPage(contentFilename)
 	if p == nil {
-		panic(fmt.Sprintf("[BUG] no Page found for %q", contentFilename))
+		return errTargetConflict(contentFilename)
 	}
 
 	f, err := b.sourceFs.Create(contentFilename)
@@ -282,32 +292,28 @@ func (b *contentBuilder) applyArcheType(contentFilename, archetypeFilename strin
 	}
 	defer f.Close()
 
-	if archetypeFilename == "" {
-		return b.cf.AppplyArchetypeTemplate(f, p, b.kind, DefaultArchetypeTemplateTemplate)
+	if archetypeFi == nil {
+		return b.cf.ApplyArchetypeTemplate(f, p, b.kind, DefaultArchetypeTemplateTemplate)
 	}
 
-	return b.cf.AppplyArchetypeFilename(f, p, b.kind, archetypeFilename)
-
+	return b.cf.ApplyArchetypeFi(f, p, b.kind, archetypeFi)
 }
 
 func (b *contentBuilder) mapArcheTypeDir() error {
 	var m archetypeMap
 
-	walkFn := func(path string, fi hugofs.FileMetaInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if fi.IsDir() {
+	walkFn := func(ctx context.Context, path string, fim hugofs.FileMetaInfo) error {
+		if fim.IsDir() {
 			return nil
 		}
 
-		fil := fi.(hugofs.FileMetaInfo)
+		pi := fim.Meta().PathInfo
 
-		if files.IsContentFile(path) {
-			m.contentFiles = append(m.contentFiles, fil)
+		if pi.IsContent() {
+			m.contentFiles = append(m.contentFiles, fim)
 			if !m.siteUsed {
-				m.siteUsed, err = b.usesSiteVar(path)
+				var err error
+				m.siteUsed, err = b.usesSiteVar(fim)
 				if err != nil {
 					return err
 				}
@@ -315,7 +321,7 @@ func (b *contentBuilder) mapArcheTypeDir() error {
 			return nil
 		}
 
-		m.otherFiles = append(m.otherFiles, fil)
+		m.otherFiles = append(m.otherFiles, fim)
 
 		return nil
 	}
@@ -323,13 +329,13 @@ func (b *contentBuilder) mapArcheTypeDir() error {
 	walkCfg := hugofs.WalkwayConfig{
 		WalkFn: walkFn,
 		Fs:     b.archeTypeFs,
-		Root:   b.archetypeFilename,
+		Root:   filepath.FromSlash(b.archetypeFi.Meta().PathInfo.Path()),
 	}
 
 	w := hugofs.NewWalkway(walkCfg)
 
 	if err := w.Walk(); err != nil {
-		return errors.Wrapf(err, "failed to walk archetype dir %q", b.archetypeFilename)
+		return fmt.Errorf("failed to walk archetype dir %q: %w", b.archetypeFi.Meta().Filename, err)
 	}
 
 	b.dirMap = m
@@ -338,20 +344,29 @@ func (b *contentBuilder) mapArcheTypeDir() error {
 }
 
 func (b *contentBuilder) openInEditorIfConfigured(filename string) error {
-	editor := b.h.Cfg.GetString("newContentEditor")
+	editor := b.h.Conf.NewContentEditor()
 	if editor == "" {
 		return nil
 	}
 
-	b.h.Log.Printf("Editing %q with %q ...\n", filename, editor)
-	cmd, err := b.h.Deps.ExecHelper.New(
-		editor,
+	editorExec := strings.Fields(editor)[0]
+	editorFlags := strings.Fields(editor)[1:]
+
+	var args []any
+	for _, editorFlag := range editorFlags {
+		args = append(args, editorFlag)
+	}
+	args = append(
+		args,
 		filename,
 		hexec.WithStdin(os.Stdin),
 		hexec.WithStderr(os.Stderr),
 		hexec.WithStdout(os.Stdout),
 	)
 
+	b.h.Log.Printf("Editing %q with %q ...\n", filename, editorExec)
+
+	cmd, err := b.h.Deps.ExecHelper.New(editorExec, args...)
 	if err != nil {
 		return err
 	}
@@ -359,17 +374,21 @@ func (b *contentBuilder) openInEditorIfConfigured(filename string) error {
 	return cmd.Run()
 }
 
-func (b *contentBuilder) usesSiteVar(filename string) (bool, error) {
-	if filename == "" {
+func (b *contentBuilder) usesSiteVar(fi hugofs.FileMetaInfo) (bool, error) {
+	if fi == nil {
 		return false, nil
 	}
-	bb, err := afero.ReadFile(b.archeTypeFs, filename)
+	f, err := fi.Meta().Open()
 	if err != nil {
-		return false, errors.Wrap(err, "failed to open archetype file")
+		return false, err
+	}
+	defer f.Close()
+	bb, err := io.ReadAll(f)
+	if err != nil {
+		return false, fmt.Errorf("failed to read archetype file: %w", err)
 	}
 
 	return bytes.Contains(bb, []byte(".Site")) || bytes.Contains(bb, []byte("site.")), nil
-
 }
 
 type archetypeMap struct {

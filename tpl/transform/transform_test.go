@@ -11,98 +11,103 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package transform
+package transform_test
 
 import (
+	"context"
 	"html/template"
+	"strings"
 	"testing"
 
-	"github.com/gohugoio/hugo/common/loggers"
-	"github.com/spf13/afero"
+	"github.com/gohugoio/hugo/hugolib"
+	"github.com/gohugoio/hugo/tpl/transform"
 
 	qt "github.com/frankban/quicktest"
-	"github.com/gohugoio/hugo/config"
-	"github.com/gohugoio/hugo/deps"
-	"github.com/gohugoio/hugo/helpers"
-	"github.com/gohugoio/hugo/hugofs"
-	"github.com/gohugoio/hugo/langs"
 )
 
 type tstNoStringer struct{}
 
 func TestEmojify(t *testing.T) {
 	t.Parallel()
-	c := qt.New(t)
+	b := hugolib.Test(t, "")
 
-	v := config.New()
-	ns := New(newDeps(v))
+	ns := transform.New(b.H.Deps)
 
 	for _, test := range []struct {
-		s      interface{}
-		expect interface{}
+		s      any
+		expect any
 	}{
-		{":notamoji:", template.HTML(":notamoji:")},
-		{"I :heart: Hugo", template.HTML("I ❤️ Hugo")},
+		{":notamoji:", ":notamoji:"},
+		{"I :heart: Hugo", "I ❤️ Hugo"},
+		{template.HTML("I :heart: <b>Hugo</b>"), template.HTML("I ❤️ <b>Hugo</b>")},
 		// errors
 		{tstNoStringer{}, false},
 	} {
 
 		result, err := ns.Emojify(test.s)
 
-		if b, ok := test.expect.(bool); ok && !b {
-			c.Assert(err, qt.Not(qt.IsNil))
+		if bb, ok := test.expect.(bool); ok && !bb {
+			b.Assert(err, qt.Not(qt.IsNil))
 			continue
 		}
 
-		c.Assert(err, qt.IsNil)
-		c.Assert(result, qt.Equals, test.expect)
+		b.Assert(err, qt.IsNil)
+		b.Assert(result, qt.Equals, test.expect)
 	}
 }
 
 func TestHighlight(t *testing.T) {
 	t.Parallel()
-	c := qt.New(t)
+	b := hugolib.Test(t, "")
 
-	v := config.New()
-	v.Set("contentDir", "content")
-	ns := New(newDeps(v))
+	ns := transform.New(b.H.Deps)
 
 	for _, test := range []struct {
-		s      interface{}
+		s      any
 		lang   string
-		opts   interface{}
-		expect interface{}
+		opts   any
+		expect any
 	}{
 		{"func boo() {}", "go", "", "boo"},
 		{"func boo() {}", "go", nil, "boo"},
 		// Issue #4179
 		{`<Foo attr=" &lt; "></Foo>`, "xml", "", `&amp;lt;`},
 		{tstNoStringer{}, "go", "", false},
+		// Issue #9591
+		{strings.Repeat("AAA	\n", 10), "bash", template.HTML("linenos=true,noClasses=false"), "line"},
 	} {
 
 		result, err := ns.Highlight(test.s, test.lang, test.opts)
 
-		if b, ok := test.expect.(bool); ok && !b {
-			c.Assert(err, qt.Not(qt.IsNil))
+		if bb, ok := test.expect.(bool); ok && !bb {
+			b.Assert(err, qt.Not(qt.IsNil))
 			continue
 		}
 
-		c.Assert(err, qt.IsNil)
-		c.Assert(string(result), qt.Contains, test.expect.(string))
+		b.Assert(err, qt.IsNil)
+		b.Assert(string(result), qt.Contains, test.expect.(string))
 	}
+}
+
+func TestCanHighlight(t *testing.T) {
+	t.Parallel()
+
+	c := qt.New(t)
+	ns := &transform.Namespace{}
+
+	c.Assert(ns.CanHighlight("go"), qt.Equals, true)
+	c.Assert(ns.CanHighlight("foo"), qt.Equals, false)
 }
 
 func TestHTMLEscape(t *testing.T) {
 	t.Parallel()
-	c := qt.New(t)
+	b := hugolib.Test(t, "")
 
-	v := config.New()
-	v.Set("contentDir", "content")
-	ns := New(newDeps(v))
+	ns := transform.New(b.H.Deps)
 
 	for _, test := range []struct {
-		s      interface{}
-		expect interface{}
+		s      any
+		expect any
 	}{
 		{`"Foo & Bar's Diner" <y@z>`, `&#34;Foo &amp; Bar&#39;s Diner&#34; &lt;y@z&gt;`},
 		{"Hugo & Caddy > Wordpress & Apache", "Hugo &amp; Caddy &gt; Wordpress &amp; Apache"},
@@ -112,27 +117,25 @@ func TestHTMLEscape(t *testing.T) {
 
 		result, err := ns.HTMLEscape(test.s)
 
-		if b, ok := test.expect.(bool); ok && !b {
-			c.Assert(err, qt.Not(qt.IsNil))
+		if bb, ok := test.expect.(bool); ok && !bb {
+			b.Assert(err, qt.Not(qt.IsNil))
 			continue
 		}
 
-		c.Assert(err, qt.IsNil)
-		c.Assert(result, qt.Equals, test.expect)
+		b.Assert(err, qt.IsNil)
+		b.Assert(result, qt.Equals, test.expect)
 	}
 }
 
 func TestHTMLUnescape(t *testing.T) {
 	t.Parallel()
-	c := qt.New(t)
+	b := hugolib.Test(t, "")
 
-	v := config.New()
-	v.Set("contentDir", "content")
-	ns := New(newDeps(v))
+	ns := transform.New(b.H.Deps)
 
 	for _, test := range []struct {
-		s      interface{}
-		expect interface{}
+		s      any
+		expect any
 	}{
 		{`&quot;Foo &amp; Bar&#39;s Diner&quot; &lt;y@z&gt;`, `"Foo & Bar's Diner" <y@z>`},
 		{"Hugo &amp; Caddy &gt; Wordpress &amp; Apache", "Hugo & Caddy > Wordpress & Apache"},
@@ -142,52 +145,49 @@ func TestHTMLUnescape(t *testing.T) {
 
 		result, err := ns.HTMLUnescape(test.s)
 
-		if b, ok := test.expect.(bool); ok && !b {
-			c.Assert(err, qt.Not(qt.IsNil))
+		if bb, ok := test.expect.(bool); ok && !bb {
+			b.Assert(err, qt.Not(qt.IsNil))
 			continue
 		}
 
-		c.Assert(err, qt.IsNil)
-		c.Assert(result, qt.Equals, test.expect)
+		b.Assert(err, qt.IsNil)
+		b.Assert(result, qt.Equals, test.expect)
 	}
 }
 
 func TestMarkdownify(t *testing.T) {
 	t.Parallel()
-	c := qt.New(t)
+	b := hugolib.Test(t, "")
 
-	v := config.New()
-	v.Set("contentDir", "content")
-	ns := New(newDeps(v))
+	ns := transform.New(b.H.Deps)
 
 	for _, test := range []struct {
-		s      interface{}
-		expect interface{}
+		s      any
+		expect any
 	}{
 		{"Hello **World!**", template.HTML("Hello <strong>World!</strong>")},
 		{[]byte("Hello Bytes **World!**"), template.HTML("Hello Bytes <strong>World!</strong>")},
 		{tstNoStringer{}, false},
 	} {
 
-		result, err := ns.Markdownify(test.s)
+		result, err := ns.Markdownify(context.Background(), test.s)
 
-		if b, ok := test.expect.(bool); ok && !b {
-			c.Assert(err, qt.Not(qt.IsNil))
+		if bb, ok := test.expect.(bool); ok && !bb {
+			b.Assert(err, qt.Not(qt.IsNil))
 			continue
 		}
 
-		c.Assert(err, qt.IsNil)
-		c.Assert(result, qt.Equals, test.expect)
+		b.Assert(err, qt.IsNil)
+		b.Assert(result, qt.Equals, test.expect)
 	}
 }
 
 // Issue #3040
 func TestMarkdownifyBlocksOfText(t *testing.T) {
 	t.Parallel()
-	c := qt.New(t)
-	v := config.New()
-	v.Set("contentDir", "content")
-	ns := New(newDeps(v))
+	b := hugolib.Test(t, "")
+
+	ns := transform.New(b.H.Deps)
 
 	text := `
 #First 
@@ -201,54 +201,38 @@ This is some more text.
 And then some.
 `
 
-	result, err := ns.Markdownify(text)
-	c.Assert(err, qt.IsNil)
-	c.Assert(result, qt.Equals, template.HTML(
-		"<p>#First</p>\n<p>This is some <em>bold</em> text.</p>\n<h2 id=\"second\">Second</h2>\n<p>This is some more text.</p>\n<p>And then some.</p>\n"))
+	result, err := ns.Markdownify(context.Background(), text)
+	b.Assert(err, qt.IsNil)
+	b.Assert(result, qt.Equals, template.HTML(
+		"<p>#First</p>\n<p>This is some <em>bold</em> text.</p>\n<h2 id=\"second\">Second</h2>\n<p>This is some more text.</p>\n<p>And then some.</p>\n",
+	))
 }
 
 func TestPlainify(t *testing.T) {
 	t.Parallel()
-	c := qt.New(t)
+	b := hugolib.Test(t, "")
 
-	v := config.New()
-	ns := New(newDeps(v))
+	ns := transform.New(b.H.Deps)
 
 	for _, test := range []struct {
-		s      interface{}
-		expect interface{}
+		s      any
+		expect any
 	}{
 		{"<em>Note:</em> blah <b>blah</b>", "Note: blah blah"},
+		{"<div data-action='click->my-controller#doThing'>qwe</div>", "qwe"},
+		{template.HTML("<em>Note:</em> A &amp; B"), template.HTML("Note: A &amp; B")},
 		// errors
 		{tstNoStringer{}, false},
 	} {
 
 		result, err := ns.Plainify(test.s)
 
-		if b, ok := test.expect.(bool); ok && !b {
-			c.Assert(err, qt.Not(qt.IsNil))
+		if bb, ok := test.expect.(bool); ok && !bb {
+			b.Assert(err, qt.Not(qt.IsNil))
 			continue
 		}
 
-		c.Assert(err, qt.IsNil)
-		c.Assert(result, qt.Equals, test.expect)
-	}
-}
-
-func newDeps(cfg config.Provider) *deps.Deps {
-	cfg.Set("contentDir", "content")
-	cfg.Set("i18nDir", "i18n")
-
-	l := langs.NewLanguage("en", cfg)
-
-	cs, err := helpers.NewContentSpec(l, loggers.NewErrorLogger(), afero.NewMemMapFs(), nil)
-	if err != nil {
-		panic(err)
-	}
-
-	return &deps.Deps{
-		Cfg:         cfg,
-		Fs:          hugofs.NewMem(l),
-		ContentSpec: cs,
+		b.Assert(err, qt.IsNil)
+		b.Assert(result, qt.Equals, test.expect)
 	}
 }

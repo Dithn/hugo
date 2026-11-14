@@ -14,7 +14,11 @@
 package reflect
 
 import (
-	"reflect"
+	"github.com/gohugoio/hugo/common/hreflect"
+	"github.com/gohugoio/hugo/resources"
+	"github.com/gohugoio/hugo/resources/images"
+	"github.com/gohugoio/hugo/resources/page"
+	"github.com/gohugoio/hugo/resources/resource"
 )
 
 // New returns a new instance of the reflect-namespaced template functions.
@@ -26,11 +30,45 @@ func New() *Namespace {
 type Namespace struct{}
 
 // IsMap reports whether v is a map.
-func (ns *Namespace) IsMap(v interface{}) bool {
-	return reflect.ValueOf(v).Kind() == reflect.Map
+func (ns *Namespace) IsMap(v any) bool {
+	return hreflect.IsMap(v)
 }
 
 // IsSlice reports whether v is a slice.
-func (ns *Namespace) IsSlice(v interface{}) bool {
-	return reflect.ValueOf(v).Kind() == reflect.Slice
+func (ns *Namespace) IsSlice(v any) bool {
+	return hreflect.IsSlice(v)
+}
+
+// IsPage reports whether v is a Hugo Page.
+func (ns *Namespace) IsPage(v any) bool {
+	_, ok := v.(page.Page)
+	return ok
+}
+
+// IsResource reports whether v is a Hugo Resource.
+func (ns *Namespace) IsResource(v any) bool {
+	_, ok := v.(resource.Resource)
+	return ok
+}
+
+// IsSite reports whether v is a Hugo Site.
+func (ns *Namespace) IsSite(v any) bool {
+	_, ok := v.(page.Site)
+	return ok
+}
+
+// IsImageResource reports whether v is a Image Resource.
+func (ns *Namespace) IsImageResource(v any) bool {
+	return resources.ResolveImageOpsSupport(v) > images.ImageResourceTypeNone
+}
+
+// IsImageResourceWithMeta reports whether v is a Image Resource that supports at least the image metadata operations Width and Height and Meta (for e.g. Exif).
+// This will return true for AVIF, HEIF and HEIC image resources, even if we don't yet support image operations like Resize, Crop, etc. on these formats.
+func (ns *Namespace) IsImageResourceWithMeta(v any) bool {
+	return resources.ResolveImageOpsSupport(v) >= images.ImageResourceTypeMetaOnly
+}
+
+// IsImageResourceProcessable reports whether v is a Image Resource that supports all image processing operations like Resize, Crop, etc. in addition to the metadata operations.
+func (ns *Namespace) IsImageResourceProcessable(v any) bool {
+	return resources.ResolveImageOpsSupport(v) >= images.ImageResourceTypeProcessable
 }

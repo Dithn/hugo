@@ -14,24 +14,21 @@
 package collections
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"html/template"
+	"math"
 	"math/rand"
 	"reflect"
 	"testing"
 	"time"
 
-	"github.com/gohugoio/hugo/common/maps"
+	"github.com/gohugoio/hugo/common/hmaps"
+	"github.com/gohugoio/hugo/config/testconfig"
+	"github.com/gohugoio/hugo/htesting"
 
 	qt "github.com/frankban/quicktest"
-	"github.com/gohugoio/hugo/common/loggers"
-	"github.com/gohugoio/hugo/config"
-	"github.com/gohugoio/hugo/deps"
-	"github.com/gohugoio/hugo/helpers"
-	"github.com/gohugoio/hugo/hugofs"
-	"github.com/gohugoio/hugo/langs"
-	"github.com/spf13/afero"
 )
 
 type tstNoStringer struct{}
@@ -40,12 +37,12 @@ func TestAfter(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	for i, test := range []struct {
-		index  interface{}
-		seq    interface{}
-		expect interface{}
+		index  any
+		seq    any
+		expect any
 	}{
 		{int(2), []string{"a", "b", "c", "d"}, []string{"c", "d"}},
 		{int32(3), []string{"a", "b"}, []string{}},
@@ -76,20 +73,18 @@ func TestAfter(t *testing.T) {
 	}
 }
 
-type tstGrouper struct {
-}
+type tstGrouper struct{}
 
 type tstGroupers []*tstGrouper
 
-func (g tstGrouper) Group(key interface{}, items interface{}) (interface{}, error) {
+func (g tstGrouper) Group(key any, items any) (any, error) {
 	ilen := reflect.ValueOf(items).Len()
 	return fmt.Sprintf("%v(%d)", key, ilen), nil
 }
 
-type tstGrouper2 struct {
-}
+type tstGrouper2 struct{}
 
-func (g *tstGrouper2) Group(key interface{}, items interface{}) (interface{}, error) {
+func (g *tstGrouper2) Group(key any, items any) (any, error) {
 	ilen := reflect.ValueOf(items).Len()
 	return fmt.Sprintf("%v(%d)", key, ilen), nil
 }
@@ -97,12 +92,12 @@ func (g *tstGrouper2) Group(key interface{}, items interface{}) (interface{}, er
 func TestGroup(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	for i, test := range []struct {
-		key    interface{}
-		items  interface{}
-		expect interface{}
+		key    any
+		items  any
+		expect any
 	}{
 		{"a", []*tstGrouper{{}, {}}, "a(2)"},
 		{"b", tstGroupers{&tstGrouper{}, &tstGrouper{}}, "b(2)"},
@@ -133,13 +128,13 @@ func TestDelimit(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	for i, test := range []struct {
-		seq       interface{}
-		delimiter interface{}
-		last      interface{}
-		expect    template.HTML
+		seq       any
+		delimiter any
+		last      any
+		expect    string
 	}{
 		{[]string{"class1", "class2", "class3"}, " ", nil, "class1 class2 class3"},
 		{[]int{1, 2, 3, 4, 5}, ",", nil, "1,2,3,4,5"},
@@ -168,13 +163,13 @@ func TestDelimit(t *testing.T) {
 	} {
 		errMsg := qt.Commentf("[%d] %v", i, test)
 
-		var result template.HTML
+		var result string
 		var err error
 
 		if test.last == nil {
-			result, err = ns.Delimit(test.seq, test.delimiter)
+			result, err = ns.Delimit(context.Background(), test.seq, test.delimiter)
 		} else {
-			result, err = ns.Delimit(test.seq, test.delimiter, test.last)
+			result, err = ns.Delimit(context.Background(), test.seq, test.delimiter, test.last)
 		}
 
 		c.Assert(err, qt.IsNil, errMsg)
@@ -185,25 +180,23 @@ func TestDelimit(t *testing.T) {
 func TestDictionary(t *testing.T) {
 	c := qt.New(t)
 
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	for i, test := range []struct {
-		values []interface{}
-		expect interface{}
+		values []any
+		expect any
 	}{
-		{[]interface{}{"a", "b"}, map[string]interface{}{"a": "b"}},
-		{[]interface{}{[]string{"a", "b"}, "c"}, map[string]interface{}{"a": map[string]interface{}{"b": "c"}}},
+		{[]any{"a", "b"}, map[string]any{"a": "b"}},
+		{[]any{[]string{"a", "b"}, "c"}, map[string]any{"a": map[string]any{"b": "c"}}},
 		{
-			[]interface{}{[]string{"a", "b"}, "c", []string{"a", "b2"}, "c2", "b", "c"},
-			map[string]interface{}{"a": map[string]interface{}{"b": "c", "b2": "c2"}, "b": "c"},
+			[]any{[]string{"a", "b"}, "c", []string{"a", "b2"}, "c2", "b", "c"},
+			map[string]any{"a": map[string]any{"b": "c", "b2": "c2"}, "b": "c"},
 		},
-		{[]interface{}{"a", 12, "b", []int{4}}, map[string]interface{}{"a": 12, "b": []int{4}}},
+		{[]any{"a", 12, "b", []int{4}}, map[string]any{"a": 12, "b": []int{4}}},
 		// errors
-		{[]interface{}{5, "b"}, false},
-		{[]interface{}{"a", "b", "c"}, false},
+		{[]any{5, "b"}, false},
+		{[]any{"a", "b", "c"}, false},
 	} {
-		i := i
-		test := test
 		c.Run(fmt.Sprint(i), func(c *qt.C) {
 			c.Parallel()
 			errMsg := qt.Commentf("[%d] %v", i, test.values)
@@ -224,7 +217,7 @@ func TestDictionary(t *testing.T) {
 func TestReverse(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	s := []string{"a", "b", "c"}
 	reversed, err := ns.Reverse(s)
@@ -239,48 +232,16 @@ func TestReverse(t *testing.T) {
 	c.Assert(err, qt.Not(qt.IsNil))
 }
 
-func TestEchoParam(t *testing.T) {
-	t.Parallel()
-	c := qt.New(t)
-
-	ns := New(&deps.Deps{})
-
-	for i, test := range []struct {
-		a      interface{}
-		key    interface{}
-		expect interface{}
-	}{
-		{[]int{1, 2, 3}, 1, int64(2)},
-		{[]uint{1, 2, 3}, 1, uint64(2)},
-		{[]float64{1.1, 2.2, 3.3}, 1, float64(2.2)},
-		{[]string{"foo", "bar", "baz"}, 1, "bar"},
-		{[]TstX{{A: "a", B: "b"}, {A: "c", B: "d"}, {A: "e", B: "f"}}, 1, ""},
-		{map[string]int{"foo": 1, "bar": 2, "baz": 3}, "bar", int64(2)},
-		{map[string]uint{"foo": 1, "bar": 2, "baz": 3}, "bar", uint64(2)},
-		{map[string]float64{"foo": 1.1, "bar": 2.2, "baz": 3.3}, "bar", float64(2.2)},
-		{map[string]string{"foo": "FOO", "bar": "BAR", "baz": "BAZ"}, "bar", "BAR"},
-		{map[string]TstX{"foo": {A: "a", B: "b"}, "bar": {A: "c", B: "d"}, "baz": {A: "e", B: "f"}}, "bar", ""},
-		{map[string]interface{}{"foo": nil}, "foo", ""},
-		{(*[]string)(nil), "bar", ""},
-	} {
-		errMsg := qt.Commentf("[%d] %v", i, test)
-
-		result := ns.EchoParam(test.a, test.key)
-
-		c.Assert(result, qt.Equals, test.expect, errMsg)
-	}
-}
-
 func TestFirst(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	for i, test := range []struct {
-		limit  interface{}
-		seq    interface{}
-		expect interface{}
+		limit  any
+		seq    any
+		expect any
 	}{
 		{int(2), []string{"a", "b", "c"}, []string{"a", "b"}},
 		{int32(3), []string{"a", "b"}, []string{"a", "b"}},
@@ -312,24 +273,23 @@ func TestFirst(t *testing.T) {
 func TestIn(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
-
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	for i, test := range []struct {
-		l1     interface{}
-		l2     interface{}
+		l1     any
+		l2     any
 		expect bool
 	}{
 		{[]string{"a", "b", "c"}, "b", true},
-		{[]interface{}{"a", "b", "c"}, "b", true},
-		{[]interface{}{"a", "b", "c"}, "d", false},
+		{[]any{"a", "b", "c"}, "b", true},
+		{[]any{"a", "b", "c"}, "d", false},
 		{[]string{"a", "b", "c"}, "d", false},
 		{[]string{"a", "12", "c"}, 12, false},
 		{[]string{"a", "b", "c"}, nil, false},
 		{[]int{1, 2, 4}, 2, true},
-		{[]interface{}{1, 2, 4}, 2, true},
-		{[]interface{}{1, 2, 4}, nil, false},
-		{[]interface{}{nil}, nil, false},
+		{[]any{1, 2, 4}, 2, true},
+		{[]any{1, 2, 4}, nil, false},
+		{[]any{nil}, nil, false},
 		{[]int{1, 2, 4}, 3, false},
 		{[]float64{1.23, 2.45, 4.67}, 1.23, true},
 		{[]float64{1.234567, 2.45, 4.67}, 1.234568, false},
@@ -389,19 +349,19 @@ func TestIntersect(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	for i, test := range []struct {
-		l1, l2 interface{}
-		expect interface{}
+		l1, l2 any
+		expect any
 	}{
 		{[]string{"a", "b", "c", "c"}, []string{"a", "b", "b"}, []string{"a", "b"}},
 		{[]string{"a", "b"}, []string{"a", "b", "c"}, []string{"a", "b"}},
 		{[]string{"a", "b", "c"}, []string{"d", "e"}, []string{}},
 		{[]string{}, []string{}, []string{}},
-		{[]string{"a", "b"}, nil, []interface{}{}},
-		{nil, []string{"a", "b"}, []interface{}{}},
-		{nil, nil, []interface{}{}},
+		{[]string{"a", "b"}, nil, []any{}},
+		{nil, []string{"a", "b"}, []any{}},
+		{nil, nil, []any{}},
 		{[]string{"1", "2"}, []int{1, 2}, []string{}},
 		{[]int{1, 2}, []string{"1", "2"}, []int{}},
 		{[]int{1, 2, 4}, []int{2, 4}, []int{2, 4}},
@@ -410,45 +370,45 @@ func TestIntersect(t *testing.T) {
 		{[]float64{2.2, 4.4}, []float64{1.1, 2.2, 4.4}, []float64{2.2, 4.4}},
 
 		// []interface{} ∩ []interface{}
-		{[]interface{}{"a", "b", "c"}, []interface{}{"a", "b", "b"}, []interface{}{"a", "b"}},
-		{[]interface{}{1, 2, 3}, []interface{}{1, 2, 2}, []interface{}{1, 2}},
-		{[]interface{}{int8(1), int8(2), int8(3)}, []interface{}{int8(1), int8(2), int8(2)}, []interface{}{int8(1), int8(2)}},
-		{[]interface{}{int16(1), int16(2), int16(3)}, []interface{}{int16(1), int16(2), int16(2)}, []interface{}{int16(1), int16(2)}},
-		{[]interface{}{int32(1), int32(2), int32(3)}, []interface{}{int32(1), int32(2), int32(2)}, []interface{}{int32(1), int32(2)}},
-		{[]interface{}{int64(1), int64(2), int64(3)}, []interface{}{int64(1), int64(2), int64(2)}, []interface{}{int64(1), int64(2)}},
-		{[]interface{}{float32(1), float32(2), float32(3)}, []interface{}{float32(1), float32(2), float32(2)}, []interface{}{float32(1), float32(2)}},
-		{[]interface{}{float64(1), float64(2), float64(3)}, []interface{}{float64(1), float64(2), float64(2)}, []interface{}{float64(1), float64(2)}},
+		{[]any{"a", "b", "c"}, []any{"a", "b", "b"}, []any{"a", "b"}},
+		{[]any{1, 2, 3}, []any{1, 2, 2}, []any{1, 2}},
+		{[]any{int8(1), int8(2), int8(3)}, []any{int8(1), int8(2), int8(2)}, []any{int8(1), int8(2)}},
+		{[]any{int16(1), int16(2), int16(3)}, []any{int16(1), int16(2), int16(2)}, []any{int16(1), int16(2)}},
+		{[]any{int32(1), int32(2), int32(3)}, []any{int32(1), int32(2), int32(2)}, []any{int32(1), int32(2)}},
+		{[]any{int64(1), int64(2), int64(3)}, []any{int64(1), int64(2), int64(2)}, []any{int64(1), int64(2)}},
+		{[]any{float32(1), float32(2), float32(3)}, []any{float32(1), float32(2), float32(2)}, []any{float32(1), float32(2)}},
+		{[]any{float64(1), float64(2), float64(3)}, []any{float64(1), float64(2), float64(2)}, []any{float64(1), float64(2)}},
 
 		// []interface{} ∩ []T
-		{[]interface{}{"a", "b", "c"}, []string{"a", "b", "b"}, []interface{}{"a", "b"}},
-		{[]interface{}{1, 2, 3}, []int{1, 2, 2}, []interface{}{1, 2}},
-		{[]interface{}{int8(1), int8(2), int8(3)}, []int8{1, 2, 2}, []interface{}{int8(1), int8(2)}},
-		{[]interface{}{int16(1), int16(2), int16(3)}, []int16{1, 2, 2}, []interface{}{int16(1), int16(2)}},
-		{[]interface{}{int32(1), int32(2), int32(3)}, []int32{1, 2, 2}, []interface{}{int32(1), int32(2)}},
-		{[]interface{}{int64(1), int64(2), int64(3)}, []int64{1, 2, 2}, []interface{}{int64(1), int64(2)}},
-		{[]interface{}{uint(1), uint(2), uint(3)}, []uint{1, 2, 2}, []interface{}{uint(1), uint(2)}},
-		{[]interface{}{float32(1), float32(2), float32(3)}, []float32{1, 2, 2}, []interface{}{float32(1), float32(2)}},
-		{[]interface{}{float64(1), float64(2), float64(3)}, []float64{1, 2, 2}, []interface{}{float64(1), float64(2)}},
+		{[]any{"a", "b", "c"}, []string{"a", "b", "b"}, []any{"a", "b"}},
+		{[]any{1, 2, 3}, []int{1, 2, 2}, []any{1, 2}},
+		{[]any{int8(1), int8(2), int8(3)}, []int8{1, 2, 2}, []any{int8(1), int8(2)}},
+		{[]any{int16(1), int16(2), int16(3)}, []int16{1, 2, 2}, []any{int16(1), int16(2)}},
+		{[]any{int32(1), int32(2), int32(3)}, []int32{1, 2, 2}, []any{int32(1), int32(2)}},
+		{[]any{int64(1), int64(2), int64(3)}, []int64{1, 2, 2}, []any{int64(1), int64(2)}},
+		{[]any{uint(1), uint(2), uint(3)}, []uint{1, 2, 2}, []any{uint(1), uint(2)}},
+		{[]any{float32(1), float32(2), float32(3)}, []float32{1, 2, 2}, []any{float32(1), float32(2)}},
+		{[]any{float64(1), float64(2), float64(3)}, []float64{1, 2, 2}, []any{float64(1), float64(2)}},
 
 		// []T ∩ []interface{}
-		{[]string{"a", "b", "c"}, []interface{}{"a", "b", "b"}, []string{"a", "b"}},
-		{[]int{1, 2, 3}, []interface{}{1, 2, 2}, []int{1, 2}},
-		{[]int8{1, 2, 3}, []interface{}{int8(1), int8(2), int8(2)}, []int8{1, 2}},
-		{[]int16{1, 2, 3}, []interface{}{int16(1), int16(2), int16(2)}, []int16{1, 2}},
-		{[]int32{1, 2, 3}, []interface{}{int32(1), int32(2), int32(2)}, []int32{1, 2}},
-		{[]int64{1, 2, 3}, []interface{}{int64(1), int64(2), int64(2)}, []int64{1, 2}},
-		{[]float32{1, 2, 3}, []interface{}{float32(1), float32(2), float32(2)}, []float32{1, 2}},
-		{[]float64{1, 2, 3}, []interface{}{float64(1), float64(2), float64(2)}, []float64{1, 2}},
+		{[]string{"a", "b", "c"}, []any{"a", "b", "b"}, []string{"a", "b"}},
+		{[]int{1, 2, 3}, []any{1, 2, 2}, []int{1, 2}},
+		{[]int8{1, 2, 3}, []any{int8(1), int8(2), int8(2)}, []int8{1, 2}},
+		{[]int16{1, 2, 3}, []any{int16(1), int16(2), int16(2)}, []int16{1, 2}},
+		{[]int32{1, 2, 3}, []any{int32(1), int32(2), int32(2)}, []int32{1, 2}},
+		{[]int64{1, 2, 3}, []any{int64(1), int64(2), int64(2)}, []int64{1, 2}},
+		{[]float32{1, 2, 3}, []any{float32(1), float32(2), float32(2)}, []float32{1, 2}},
+		{[]float64{1, 2, 3}, []any{float64(1), float64(2), float64(2)}, []float64{1, 2}},
 
 		// Structs
 		{pagesPtr{p1, p4, p2, p3}, pagesPtr{p4, p2, p2}, pagesPtr{p4, p2}},
 		{pagesVals{p1v, p4v, p2v, p3v}, pagesVals{p1v, p3v, p3v}, pagesVals{p1v, p3v}},
-		{[]interface{}{p1, p4, p2, p3}, []interface{}{p4, p2, p2}, []interface{}{p4, p2}},
-		{[]interface{}{p1v, p4v, p2v, p3v}, []interface{}{p1v, p3v, p3v}, []interface{}{p1v, p3v}},
+		{[]any{p1, p4, p2, p3}, []any{p4, p2, p2}, []any{p4, p2}},
+		{[]any{p1v, p4v, p2v, p3v}, []any{p1v, p3v, p3v}, []any{p1v, p3v}},
 		{pagesPtr{p1, p4, p2, p3}, pagesPtr{}, pagesPtr{}},
 		{pagesVals{}, pagesVals{p1v, p3v, p3v}, pagesVals{}},
-		{[]interface{}{p1, p4, p2, p3}, []interface{}{}, []interface{}{}},
-		{[]interface{}{}, []interface{}{p1v, p3v, p3v}, []interface{}{}},
+		{[]any{p1, p4, p2, p3}, []any{}, []any{}},
+		{[]any{}, []any{p1v, p3v, p3v}, []any{}},
 
 		// errors
 		{"not array or slice", []string{"a"}, false},
@@ -479,26 +439,26 @@ func TestIntersect(t *testing.T) {
 func TestIsSet(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
-	ns := newTestNs()
+	ns := newNs()
 
 	for i, test := range []struct {
-		a      interface{}
-		key    interface{}
+		a      any
+		key    any
 		expect bool
 		isErr  bool
 	}{
-		{[]interface{}{1, 2, 3, 5}, 2, true, false},
-		{[]interface{}{1, 2, 3, 5}, "2", true, false},
-		{[]interface{}{1, 2, 3, 5}, 2.0, true, false},
+		{[]any{1, 2, 3, 5}, 2, true, false},
+		{[]any{1, 2, 3, 5}, "2", true, false},
+		{[]any{1, 2, 3, 5}, 2.0, true, false},
 
-		{[]interface{}{1, 2, 3, 5}, 22, false, false},
+		{[]any{1, 2, 3, 5}, 22, false, false},
 
-		{map[string]interface{}{"a": 1, "b": 2}, "b", true, false},
-		{map[string]interface{}{"a": 1, "b": 2}, "bc", false, false},
+		{map[string]any{"a": 1, "b": 2}, "b", true, false},
+		{map[string]any{"a": 1, "b": 2}, "bc", false, false},
 
 		{time.Now(), "Day", false, false},
 		{nil, "nil", false, false},
-		{[]interface{}{1, 2, 3, 5}, TstX{}, false, true},
+		{[]any{1, 2, 3, 5}, TstX{}, false, true},
 	} {
 		errMsg := qt.Commentf("[%d] %v", i, test)
 
@@ -516,12 +476,12 @@ func TestLast(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	for i, test := range []struct {
-		limit  interface{}
-		seq    interface{}
-		expect interface{}
+		limit  any
+		seq    any
+		expect any
 	}{
 		{int(2), []string{"a", "b", "c"}, []string{"b", "c"}},
 		{int32(3), []string{"a", "b"}, []string{"a", "b"}},
@@ -552,96 +512,34 @@ func TestLast(t *testing.T) {
 	}
 }
 
-func TestQuerify(t *testing.T) {
-	t.Parallel()
-	c := qt.New(t)
-	ns := New(&deps.Deps{})
-
-	for i, test := range []struct {
-		params []interface{}
-		expect interface{}
-	}{
-		{[]interface{}{"a", "b"}, "a=b"},
-		{[]interface{}{"a", "b", "c", "d", "f", " &"}, `a=b&c=d&f=+%26`},
-		{[]interface{}{[]string{"a", "b"}}, "a=b"},
-		{[]interface{}{[]string{"a", "b", "c", "d", "f", " &"}}, `a=b&c=d&f=+%26`},
-		{[]interface{}{[]interface{}{"x", "y"}}, `x=y`},
-		{[]interface{}{[]interface{}{"x", 5}}, `x=5`},
-		// errors
-		{[]interface{}{5, "b"}, false},
-		{[]interface{}{"a", "b", "c"}, false},
-		{[]interface{}{[]string{"a", "b", "c"}}, false},
-		{[]interface{}{[]string{"a", "b"}, "c"}, false},
-		{[]interface{}{[]interface{}{"c", "d", "e"}}, false},
-	} {
-		errMsg := qt.Commentf("[%d] %v", i, test.params)
-
-		result, err := ns.Querify(test.params...)
-
-		if b, ok := test.expect.(bool); ok && !b {
-			c.Assert(err, qt.Not(qt.IsNil), errMsg)
-			continue
-		}
-
-		c.Assert(err, qt.IsNil, errMsg)
-		c.Assert(result, qt.Equals, test.expect, errMsg)
-	}
-}
-
-func BenchmarkQuerify(b *testing.B) {
-	ns := New(&deps.Deps{})
-	params := []interface{}{"a", "b", "c", "d", "f", " &"}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := ns.Querify(params...)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkQuerifySlice(b *testing.B) {
-	ns := New(&deps.Deps{})
-	params := []string{"a", "b", "c", "d", "f", " &"}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := ns.Querify(params)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func TestSeq(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	for i, test := range []struct {
-		args   []interface{}
-		expect interface{}
+		args   []any
+		expect any
 	}{
-		{[]interface{}{-2, 5}, []int{-2, -1, 0, 1, 2, 3, 4, 5}},
-		{[]interface{}{1, 2, 4}, []int{1, 3}},
-		{[]interface{}{1}, []int{1}},
-		{[]interface{}{3}, []int{1, 2, 3}},
-		{[]interface{}{3.2}, []int{1, 2, 3}},
-		{[]interface{}{0}, []int{}},
-		{[]interface{}{-1}, []int{-1}},
-		{[]interface{}{-3}, []int{-1, -2, -3}},
-		{[]interface{}{3, -2}, []int{3, 2, 1, 0, -1, -2}},
-		{[]interface{}{6, -2, 2}, []int{6, 4, 2}},
+		{[]any{-2, 5}, []int{-2, -1, 0, 1, 2, 3, 4, 5}},
+		{[]any{1, 2, 4}, []int{1, 3}},
+		{[]any{1}, []int{1}},
+		{[]any{3}, []int{1, 2, 3}},
+		{[]any{3.2}, []int{1, 2, 3}},
+		{[]any{0}, []int{}},
+		{[]any{-1}, []int{-1}},
+		{[]any{-3}, []int{-1, -2, -3}},
+		{[]any{3, -2}, []int{3, 2, 1, 0, -1, -2}},
+		{[]any{6, -2, 2}, []int{6, 4, 2}},
 		// errors
-		{[]interface{}{1, 0, 2}, false},
-		{[]interface{}{1, -1, 2}, false},
-		{[]interface{}{2, 1, 1}, false},
-		{[]interface{}{2, 1, 1, 1}, false},
-		{[]interface{}{2001}, false},
-		{[]interface{}{}, false},
-		{[]interface{}{0, -1000000}, false},
-		{[]interface{}{tstNoStringer{}}, false},
+		{[]any{1, 0, 2}, false},
+		{[]any{1, -1, 2}, false},
+		{[]any{2, 1, 1}, false},
+		{[]any{2, 1, 1, 1}, false},
+		{[]any{-1000001}, false},
+		{[]any{}, false},
+		{[]any{0, -1000000}, false},
+		{[]any{tstNoStringer{}}, false},
 		{nil, false},
 	} {
 		errMsg := qt.Commentf("[%d] %v", i, test)
@@ -661,10 +559,10 @@ func TestSeq(t *testing.T) {
 func TestShuffle(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	for i, test := range []struct {
-		seq     interface{}
+		seq     any
 		success bool
 	}{
 		{[]string{"a", "b", "c", "d"}, true},
@@ -701,13 +599,12 @@ func TestShuffle(t *testing.T) {
 func TestShuffleRandomising(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	// Note that this test can fail with false negative result if the shuffle
 	// of the sequence happens to be the same as the original sequence. However
 	// the probability of the event is 10^-158 which is negligible.
 	seqLen := 100
-	rand.Seed(time.Now().UTC().UnixNano())
 
 	for _, test := range []struct {
 		seq []int
@@ -732,17 +629,17 @@ func TestShuffleRandomising(t *testing.T) {
 func TestSlice(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	for i, test := range []struct {
-		args     []interface{}
-		expected interface{}
+		args     []any
+		expected any
 	}{
-		{[]interface{}{"a", "b"}, []string{"a", "b"}},
-		{[]interface{}{}, []interface{}{}},
-		{[]interface{}{nil}, []interface{}{nil}},
-		{[]interface{}{5, "b"}, []interface{}{5, "b"}},
-		{[]interface{}{tstNoStringer{}}, []tstNoStringer{{}}},
+		{[]any{"a", "b"}, []string{"a", "b"}},
+		{[]any{}, []any{}},
+		{[]any{nil}, []any{nil}},
+		{[]any{5, "b"}, []any{5, "b"}},
+		{[]any{tstNoStringer{}}, []tstNoStringer{{}}},
 	} {
 		errMsg := qt.Commentf("[%d] %v", i, test.args)
 
@@ -756,21 +653,30 @@ func TestUnion(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(&deps.Deps{})
+	ns := newNs()
 
 	for i, test := range []struct {
-		l1     interface{}
-		l2     interface{}
-		expect interface{}
+		l1     any
+		l2     any
+		expect any
 		isErr  bool
 	}{
-		{nil, nil, []interface{}{}, false},
+		{nil, nil, []any{}, false},
 		{nil, []string{"a", "b"}, []string{"a", "b"}, false},
 		{[]string{"a", "b"}, nil, []string{"a", "b"}, false},
 
 		// []A ∪ []B
 		{[]string{"1", "2"}, []int{3}, []string{}, false},
 		{[]int{1, 2}, []string{"1", "2"}, []int{}, false},
+
+		// numeric []A ∪ []B unify. See issue 15323.
+		{[]int{1}, []float64{1.0}, []int{1}, false},
+		{[]int{1, 2}, []float64{2.0, 3.0}, []int{1, 2, 3}, false},
+		{[]float64{1.0}, []int{1, 2}, []float64{1.0, 2.0}, false},
+		{[]int{}, []float64{1.0}, []int{1}, false},
+		// Values not representable in l1's element type are skipped.
+		{[]int8{1}, []int64{300}, []int8{1}, false},
+		{[]int{1}, []float64{1.5}, []int{1}, false},
 
 		// []T ∪ []T
 		{[]string{"a", "b", "c", "c"}, []string{"a", "b", "b"}, []string{"a", "b", "c"}, false},
@@ -783,36 +689,36 @@ func TestUnion(t *testing.T) {
 		{[]int{2, 4}, []int{1, 2, 4}, []int{2, 4, 1}, false},
 		{[]int{1, 2, 4}, []int{3, 6}, []int{1, 2, 4, 3, 6}, false},
 		{[]float64{2.2, 4.4}, []float64{1.1, 2.2, 4.4}, []float64{2.2, 4.4, 1.1}, false},
-		{[]interface{}{"a", "b", "c", "c"}, []interface{}{"a", "b", "b"}, []interface{}{"a", "b", "c"}, false},
+		{[]any{"a", "b", "c", "c"}, []any{"a", "b", "b"}, []any{"a", "b", "c"}, false},
 
 		// []T ∪ []interface{}
-		{[]string{"1", "2"}, []interface{}{"9"}, []string{"1", "2", "9"}, false},
-		{[]int{2, 4}, []interface{}{1, 2, 4}, []int{2, 4, 1}, false},
-		{[]int8{2, 4}, []interface{}{int8(1), int8(2), int8(4)}, []int8{2, 4, 1}, false},
-		{[]int8{2, 4}, []interface{}{1, 2, 4}, []int8{2, 4, 1}, false},
-		{[]int16{2, 4}, []interface{}{1, 2, 4}, []int16{2, 4, 1}, false},
-		{[]int32{2, 4}, []interface{}{1, 2, 4}, []int32{2, 4, 1}, false},
-		{[]int64{2, 4}, []interface{}{1, 2, 4}, []int64{2, 4, 1}, false},
+		{[]string{"1", "2"}, []any{"9"}, []string{"1", "2", "9"}, false},
+		{[]int{2, 4}, []any{1, 2, 4}, []int{2, 4, 1}, false},
+		{[]int8{2, 4}, []any{int8(1), int8(2), int8(4)}, []int8{2, 4, 1}, false},
+		{[]int8{2, 4}, []any{1, 2, 4}, []int8{2, 4, 1}, false},
+		{[]int16{2, 4}, []any{1, 2, 4}, []int16{2, 4, 1}, false},
+		{[]int32{2, 4}, []any{1, 2, 4}, []int32{2, 4, 1}, false},
+		{[]int64{2, 4}, []any{1, 2, 4}, []int64{2, 4, 1}, false},
 
-		{[]float64{2.2, 4.4}, []interface{}{1.1, 2.2, 4.4}, []float64{2.2, 4.4, 1.1}, false},
-		{[]float32{2.2, 4.4}, []interface{}{1.1, 2.2, 4.4}, []float32{2.2, 4.4, 1.1}, false},
+		{[]float64{2.2, 4.4}, []any{1.1, 2.2, 4.4}, []float64{2.2, 4.4, 1.1}, false},
+		{[]float32{2.2, 4.4}, []any{1.1, 2.2, 4.4}, []float32{2.2, 4.4, 1.1}, false},
 
 		// []interface{} ∪ []T
-		{[]interface{}{"a", "b", "c", "c"}, []string{"a", "b", "d"}, []interface{}{"a", "b", "c", "d"}, false},
-		{[]interface{}{}, []string{}, []interface{}{}, false},
-		{[]interface{}{1, 2}, []int{2, 3}, []interface{}{1, 2, 3}, false},
-		{[]interface{}{1, 2}, []int8{2, 3}, []interface{}{1, 2, 3}, false}, // 28
-		{[]interface{}{uint(1), uint(2)}, []uint{2, 3}, []interface{}{uint(1), uint(2), uint(3)}, false},
-		{[]interface{}{1.1, 2.2}, []float64{2.2, 3.3}, []interface{}{1.1, 2.2, 3.3}, false},
+		{[]any{"a", "b", "c", "c"}, []string{"a", "b", "d"}, []any{"a", "b", "c", "d"}, false},
+		{[]any{}, []string{}, []any{}, false},
+		{[]any{1, 2}, []int{2, 3}, []any{1, 2, 3}, false},
+		{[]any{1, 2}, []int8{2, 3}, []any{1, 2, int8(3)}, false},
+		{[]any{uint(1), uint(2)}, []uint{2, 3}, []any{uint(1), uint(2), uint(3)}, false},
+		{[]any{1.1, 2.2}, []float64{2.2, 3.3}, []any{1.1, 2.2, 3.3}, false},
 
 		// Structs
 		{pagesPtr{p1, p4}, pagesPtr{p4, p2, p2}, pagesPtr{p1, p4, p2}, false},
 		{pagesVals{p1v}, pagesVals{p3v, p3v}, pagesVals{p1v, p3v}, false},
-		{[]interface{}{p1, p4}, []interface{}{p4, p2, p2}, []interface{}{p1, p4, p2}, false},
-		{[]interface{}{p1v}, []interface{}{p3v, p3v}, []interface{}{p1v, p3v}, false},
+		{[]any{p1, p4}, []any{p4, p2, p2}, []any{p1, p4, p2}, false},
+		{[]any{p1v}, []any{p3v, p3v}, []any{p1v, p3v}, false},
 		// #3686
-		{[]interface{}{p1v}, []interface{}{}, []interface{}{p1v}, false},
-		{[]interface{}{}, []interface{}{p1v}, []interface{}{p1v}, false},
+		{[]any{p1v}, []any{}, []any{p1v}, false},
+		{[]any{}, []any{p1v}, []any{p1v}, false},
 		{pagesPtr{p1}, pagesPtr{}, pagesPtr{p1}, false},
 		{pagesVals{p1v}, pagesVals{}, pagesVals{p1v}, false},
 		{pagesPtr{}, pagesPtr{p1}, pagesPtr{p1}, false},
@@ -845,10 +751,10 @@ func TestUnion(t *testing.T) {
 func TestUniq(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
-	ns := New(&deps.Deps{})
+	ns := newNs()
 	for i, test := range []struct {
-		l      interface{}
-		expect interface{}
+		l      any
+		expect any
 		isErr  bool
 	}{
 		{[]string{"a", "b", "c"}, []string{"a", "b", "c"}, false},
@@ -860,7 +766,7 @@ func TestUniq(t *testing.T) {
 		{[]int{1, 2, 2, 3}, []int{1, 2, 3}, false},
 		{[]int{1, 2, 3, 2}, []int{1, 2, 3}, false},
 		{[4]int{1, 2, 3, 2}, []int{1, 2, 3}, false},
-		{nil, make([]interface{}, 0), false},
+		{nil, make([]any, 0), false},
 		// Pointers
 		{pagesPtr{p1, p2, p3, p2}, pagesPtr{p1, p2, p3}, false},
 		{pagesPtr{}, pagesPtr{}, false},
@@ -891,6 +797,87 @@ func TestUniq(t *testing.T) {
 	}
 }
 
+func TestD(t *testing.T) {
+	t.Parallel()
+	ns := newNs()
+
+	const (
+		errNumberOfRequestedValuesRegexPattern = `.*the number of requested values.*`
+		errMaximumRequestedValueRegexPattern   = `.*the maximum requested value.*`
+		errSeedValueRegexPattern               = `.*the seed value.*`
+	)
+
+	tests := []struct {
+		name        string
+		seed        any
+		n           any
+		hi          any
+		wantResult  []int
+		wantErrText string
+	}{
+		// n <= hi
+		{"seed_eq_42", 42, 5, 100, []int{24, 34, 66, 82, 96}, ""},
+		{"seed_eq_31", 31, 5, 100, []int{12, 37, 38, 69, 98}, ""},
+		{"n_lt_hi", 42, 9, 10, []int{0, 1, 2, 3, 4, 6, 7, 8, 9}, ""},
+		{"n_eq_hi", 42, 10, 10, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, ""},
+		{"hi_eq_max_size", 42, 5, maxSeqSize, []int{240121, 347230, 669726, 829701, 957989}, ""},
+		// n > hi
+		{"n_gt_hi", 42, 11, 10, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, ""},
+		// zero values
+		{"seed_eq_0", 0, 5, 100, []int{0, 2, 29, 50, 72}, ""},
+		{"n_eq_0", 42, 0, 100, []int{}, ""},
+		{"hi_eq_0", 42, 5, 0, []int{}, ""},
+		// errors: values < 0
+		{"seed_lt_0", -42, 5, 100, nil, errSeedValueRegexPattern},
+		{"n_lt_0", 42, -1, 100, nil, errNumberOfRequestedValuesRegexPattern},
+		{"hi_lt_0", 42, 5, -100, nil, errMaximumRequestedValueRegexPattern},
+		// errors: values that can't be cast to int
+		{"seed_invalid_type", "foo", 5, 100, nil, errSeedValueRegexPattern},
+		{"n_invalid_type", 42, "bar", 100, nil, errNumberOfRequestedValuesRegexPattern},
+		{"hi_invalid_type", 42, 5, "baz", nil, errMaximumRequestedValueRegexPattern},
+		// errors: values that exceed maxSeqSize
+		{"n_gt_max_size", 42, maxSeqSize + 1, 10, nil, errNumberOfRequestedValuesRegexPattern},
+		{"hi_gt_max_size", 42, 5, maxSeqSize + 1, nil, errMaximumRequestedValueRegexPattern},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := qt.New(t)
+
+			got, err := ns.D(tt.seed, tt.n, tt.hi)
+
+			if tt.wantErrText != "" {
+				c.Assert(err, qt.ErrorMatches, tt.wantErrText, qt.Commentf("n=%d, hi=%d", tt.n, tt.hi))
+				c.Assert(got, qt.IsNil, qt.Commentf("Expected nil result on error"))
+				return
+			}
+
+			c.Assert(err, qt.IsNil, qt.Commentf("Did not expect an error, but got: %v", err))
+			c.Assert(got, qt.DeepEquals, tt.wantResult)
+		})
+	}
+}
+
+func BenchmarkD2(b *testing.B) {
+	ns := newNs()
+	runBenchmark := func(seed, n, max any) {
+		name := fmt.Sprintf("n=%d,max=%d", n, max)
+		b.Run(name, func(b *testing.B) {
+			for b.Loop() {
+				_, _ = ns.D(seed, n, max)
+			}
+		})
+	}
+
+	runBenchmark(32, 5, 100)
+	runBenchmark(32, 50, 1000)
+	runBenchmark(32, 10, 10000)
+	runBenchmark(32, 500, 10000)
+	runBenchmark(32, 10, 500000)
+	runBenchmark(32, 5000, 500000)
+}
+
 func (x *TstX) TstRp() string {
 	return "r" + x.A
 }
@@ -903,6 +890,7 @@ func (x TstX) TstRv2() string {
 	return "r" + x.B
 }
 
+//lint:ignore U1000 reflect test
 func (x TstX) unexportedMethod() string {
 	return x.unexported
 }
@@ -931,14 +919,14 @@ func (x TstX) String() string {
 
 type TstX struct {
 	A, B       string
-	unexported string
+	unexported string //lint:ignore U1000 reflect test
 }
 
 type TstParams struct {
-	params maps.Params
+	params hmaps.Params
 }
 
-func (x TstParams) Params() maps.Params {
+func (x TstParams) Params() hmaps.Params {
 	return x.params
 }
 
@@ -951,14 +939,14 @@ type TstXI interface {
 	TstRv2() string
 }
 
-func ToTstXIs(slice interface{}) []TstXI {
+func ToTstXIs(slice any) []TstXI {
 	s := reflect.ValueOf(slice)
 	if s.Kind() != reflect.Slice {
 		return nil
 	}
 	tis := make([]TstXI, s.Len())
 
-	for i := 0; i < s.Len(); i++ {
+	for i := range s.Len() {
 		tsti, ok := s.Index(i).Interface().(TstXI)
 		if !ok {
 			return nil
@@ -969,23 +957,75 @@ func ToTstXIs(slice interface{}) []TstXI {
 	return tis
 }
 
-func newDeps(cfg config.Provider) *deps.Deps {
-	l := langs.NewLanguage("en", cfg)
-	l.Set("i18nDir", "i18n")
-	cs, err := helpers.NewContentSpec(l, loggers.NewErrorLogger(), afero.NewMemMapFs(), nil)
-	if err != nil {
-		panic(err)
-	}
-	return &deps.Deps{
-		Cfg:         cfg,
-		Fs:          hugofs.NewMem(l),
-		ContentSpec: cs,
-		Log:         loggers.NewErrorLogger(),
-	}
+func newNs() *Namespace {
+	return New(testconfig.GetTestDeps(nil, nil))
 }
 
-func newTestNs() *Namespace {
-	v := config.New()
-	v.Set("contentDir", "content")
-	return New(newDeps(v))
+// Numbers are compared by exact value across int, uint and float types in
+// all set operations.
+// See issue 15358.
+func TestSetOperationsExactNumbers(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+	ns := newNs()
+
+	a := int64(1<<53 + 1)
+	b := int64(1 << 53)
+	bf := float64(b)
+	u := uint64(math.MaxUint64)
+	im := int64(math.MaxInt64)
+	um := uint64(math.MaxInt64)
+
+	type testCase struct {
+		fn     func() (any, error)
+		expect any
+	}
+
+	tests := []testCase{
+		{func() (any, error) { return ns.In([]any{a}, b) }, false},
+		{func() (any, error) { return ns.In([]any{a}, bf) }, false},
+		{func() (any, error) { return ns.In([]any{b}, bf) }, true},
+		{func() (any, error) { return ns.In([]any{um}, im) }, true},
+		{func() (any, error) { return ns.In([]any{u}, float64(u)) }, false},
+		{func() (any, error) { return ns.In([]any{-1}, u) }, false},
+
+		{func() (any, error) { return ns.Intersect([]any{a}, []any{a}) }, []any{a}},
+		{func() (any, error) { return ns.Intersect([]any{a}, []any{b}) }, []any{}},
+		{func() (any, error) { return ns.Intersect([]any{a, b}, []any{b, a}) }, []any{a, b}},
+		{func() (any, error) { return ns.Intersect([]any{b}, []any{bf}) }, []any{b}},
+		{func() (any, error) { return ns.Intersect([]uint64{u}, []uint64{u}) }, []uint64{u}},
+		{func() (any, error) { return ns.Intersect([]any{um}, []any{im}) }, []any{um}},
+		{func() (any, error) { return ns.Intersect([]any{-1}, []any{u}) }, []any{}},
+
+		{func() (any, error) { return ns.Union([]any{a}, []any{b}) }, []any{a, b}},
+		{func() (any, error) { return ns.Union([]any{b}, []any{bf}) }, []any{b}},
+		{func() (any, error) { return ns.Union([]any{um}, []any{im}) }, []any{um}},
+		{func() (any, error) { return ns.Union([]int64{a}, []float64{bf}) }, []int64{a, b}},
+		{func() (any, error) { return ns.Union([]any{}, []any{1, 1.0}) }, []any{1}},
+
+		{func() (any, error) { return ns.Uniq([]any{um, im, float64(1 << 63), uint64(1 << 63)}) }, []any{um, float64(1 << 63)}},
+
+		{func() (any, error) { return ns.SymDiff([]any{a}, []any{b}) }, []any{b, a}},
+		{func() (any, error) { return ns.SymDiff([]any{um}, []any{im}) }, []any{}},
+
+		{func() (any, error) { return ns.Complement([]any{bf}, []any{a, b}) }, []any{a}},
+		{func() (any, error) { return ns.Complement([]any{im}, []any{um}) }, []any{}},
+	}
+
+	if !htesting.Is32Bit() {
+		tests = append(tests, []testCase{
+			{func() (any, error) { return ns.In([]int64{a}, int(a)) }, true},
+			{func() (any, error) { return ns.Intersect([]int64{a}, []int{int(a)}) }, []int64{a}},
+			{func() (any, error) { return ns.Union([]any{a}, []any{int(a)}) }, []any{a}},
+			{func() (any, error) { return ns.Uniq([]any{a, b, a, int(a), bf}) }, []any{a, b}},
+			{func() (any, error) { return ns.SymDiff([]any{a}, []any{int(a)}) }, []any{}},
+			{func() (any, error) { return ns.Complement([]any{int(a)}, []any{a, b}) }, []any{b}},
+		}...)
+	}
+
+	for i, test := range tests {
+		result, err := test.fn()
+		c.Assert(err, qt.IsNil, qt.Commentf("[%d]", i))
+		c.Assert(result, qt.DeepEquals, test.expect, qt.Commentf("[%d]", i))
+	}
 }

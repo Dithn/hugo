@@ -15,6 +15,7 @@ package hugolib
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -24,21 +25,21 @@ import (
 	"strings"
 
 	"github.com/gohugoio/hugo/common/loggers"
-
+	"github.com/gohugoio/hugo/hugolib/sitesmatrix"
 	"github.com/gohugoio/hugo/output"
 	"github.com/gohugoio/hugo/publisher"
 	"github.com/gohugoio/hugo/resources/page"
-	"github.com/gohugoio/hugo/tpl"
+	"github.com/gohugoio/hugo/tpl/tplimpl"
 )
 
 type aliasHandler struct {
-	t         tpl.TemplateHandler
+	ts        *tplimpl.TemplateStore
 	log       loggers.Logger
 	allowRoot bool
 }
 
-func newAliasHandler(t tpl.TemplateHandler, l loggers.Logger, allowRoot bool) aliasHandler {
-	return aliasHandler{t, l, allowRoot}
+func newAliasHandler(ts *tplimpl.TemplateStore, l loggers.Logger, allowRoot bool) aliasHandler {
+	return aliasHandler{ts, l, allowRoot}
 }
 
 type aliasPage struct {
@@ -46,17 +47,31 @@ type aliasPage struct {
 	page.Page
 }
 
-func (a aliasHandler) renderAlias(permalink string, p page.Page) (io.Reader, error) {
-	var templ tpl.Template
-	var found bool
+func (a aliasHandler) renderAlias(permalink string, p page.Page, matrix sitesmatrix.VectorProvider) (io.Reader, error) {
+	var templateDesc tplimpl.TemplateDescriptor
+	var base string = ""
+	if ps, ok := p.(*pageState); ok {
+		base, templateDesc = ps.GetInternalTemplateBasePathAndDescriptor()
+	}
+	templateDesc.LayoutFromUser = ""
+	templateDesc.Kind = ""
+	templateDesc.OutputFormat = output.AliasHTMLFormat.Name
+	templateDesc.MediaType = output.AliasHTMLFormat.MediaType.Type
 
-	templ, found = a.t.Lookup("alias.html")
-	if !found {
-		// TODO(bep) consolidate
-		templ, found = a.t.Lookup("_internal/alias.html")
-		if !found {
-			return nil, errors.New("no alias template found")
-		}
+	q := tplimpl.TemplateQuery{
+		Path:     base,
+		Category: tplimpl.CategoryLayout,
+		Desc:     templateDesc,
+		Sites:    matrix,
+	}
+
+	t := a.ts.LookupPagesLayout(q)
+	if t == nil {
+		return nil, errors.New("no alias template found")
+	}
+
+	if p == nil {
+		p = page.NopPage
 	}
 
 	data := aliasPage{
@@ -64,8 +79,10 @@ func (a aliasHandler) renderAlias(permalink string, p page.Page) (io.Reader, err
 		p,
 	}
 
+	ctx := a.ts.PrepareTopLevelRenderCtx(context.Background(), p)
+
 	buffer := new(bytes.Buffer)
-	err := a.t.Execute(templ, buffer, data)
+	err := a.ts.ExecuteWithContext(ctx, t, buffer, data)
 	if err != nil {
 		return nil, err
 	}
@@ -77,16 +94,14 @@ func (s *Site) writeDestAlias(path, permalink string, outputFormat output.Format
 }
 
 func (s *Site) publishDestAlias(allowRoot bool, path, permalink string, outputFormat output.Format, p page.Page) (err error) {
-	handler := newAliasHandler(s.Tmpl(), s.Log, allowRoot)
+	handler := newAliasHandler(s.GetTemplateStore(), s.Log, allowRoot)
 
-	s.Log.Debugln("creating alias:", path, "redirecting to", permalink)
-
-	targetPath, err := handler.targetPathAlias(path)
+	targetPath, err := handler.targetPathAlias(path, outputFormat)
 	if err != nil {
 		return err
 	}
 
-	aliasContent, err := handler.renderAlias(permalink, p)
+	aliasContent, err := handler.renderAlias(permalink, p, s.siteVector)
 	if err != nil {
 		return err
 	}
@@ -98,14 +113,14 @@ func (s *Site) publishDestAlias(allowRoot bool, path, permalink string, outputFo
 		OutputFormat: outputFormat,
 	}
 
-	if s.Info.relativeURLs || s.Info.canonifyURLs {
+	if s.conf.RelativeURLs || s.conf.CanonifyURLs {
 		pd.AbsURLPath = s.absURLPath(targetPath)
 	}
 
 	return s.publisher.Publish(pd)
 }
 
-func (a aliasHandler) targetPathAlias(src string) (string, error) {
+func (a aliasHandler) targetPathAlias(src string, of output.Format) (string, error) {
 	originalAlias := src
 	if len(src) <= 0 {
 		return "", fmt.Errorf("alias \"\" is an empty string")
@@ -161,13 +176,23 @@ func (a aliasHandler) targetPathAlias(src string) (string, error) {
 		}
 	}
 
-	// Add the final touch
+	// Add the final touch. When the alias does not already end in one of the
+	// output format's configured suffixes, treat it as a directory and append
+	// the format's base name and suffix (e.g. index.html).
 	alias = strings.TrimPrefix(alias, "/")
+	baseFile := of.BaseName + of.MediaType.FirstSuffix.FullSuffix
 	if strings.HasSuffix(alias, "/") {
-		alias = alias + "index.html"
-	} else if !strings.HasSuffix(alias, ".html") {
-		alias = alias + "/" + "index.html"
+		alias = alias + baseFile
+	} else if !pathHasOutputFormatSuffix(alias, of) {
+		alias = alias + "/" + baseFile
 	}
 
 	return filepath.FromSlash(alias), nil
+}
+
+// pathHasOutputFormatSuffix reports whether the last element of p ends in one
+// of the suffixes configured for the output format's media type.
+func pathHasOutputFormatSuffix(p string, of output.Format) bool {
+	ext := path.Ext(p)
+	return ext != "" && of.MediaType.HasSuffix(ext[1:])
 }

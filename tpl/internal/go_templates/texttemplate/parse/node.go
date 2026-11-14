@@ -71,6 +71,8 @@ const (
 	NodeVariable                   // A $ variable.
 	NodeWith                       // A with action.
 	NodeComment                    // A comment.
+	NodeBreak                      // A break action.
+	NodeContinue                   // A continue action.
 )
 
 // Nodes.
@@ -169,9 +171,9 @@ func (c *CommentNode) String() string {
 }
 
 func (c *CommentNode) writeTo(sb *strings.Builder) {
-	sb.WriteString("{{")
+	sb.WriteString(c.tr.leftDelim)
 	sb.WriteString(c.Text)
-	sb.WriteString("}}")
+	sb.WriteString(c.tr.rightDelim)
 }
 
 func (c *CommentNode) tree() *Tree {
@@ -215,7 +217,11 @@ func (p *PipeNode) writeTo(sb *strings.Builder) {
 			}
 			v.writeTo(sb)
 		}
-		sb.WriteString(" := ")
+		if p.IsAssign {
+			sb.WriteString(" = ")
+		} else {
+			sb.WriteString(" := ")
+		}
 	}
 	for i, c := range p.Cmds {
 		if i > 0 {
@@ -271,9 +277,9 @@ func (a *ActionNode) String() string {
 }
 
 func (a *ActionNode) writeTo(sb *strings.Builder) {
-	sb.WriteString("{{")
+	sb.WriteString(a.tr.leftDelim)
 	a.Pipe.writeTo(sb)
-	sb.WriteString("}}")
+	sb.WriteString(a.tr.rightDelim)
 }
 
 func (a *ActionNode) tree() *Tree {
@@ -282,7 +288,6 @@ func (a *ActionNode) tree() *Tree {
 
 func (a *ActionNode) Copy() Node {
 	return a.tr.newAction(a.Pos, a.Line, a.Pipe.CopyPipe())
-
 }
 
 // CommandNode holds a command (a pipeline inside an evaluating action).
@@ -345,12 +350,12 @@ type IdentifierNode struct {
 	Ident string // The identifier's name.
 }
 
-// NewIdentifier returns a new IdentifierNode with the given identifier name.
+// NewIdentifier returns a new [IdentifierNode] with the given identifier name.
 func NewIdentifier(ident string) *IdentifierNode {
 	return &IdentifierNode{NodeType: NodeIdentifier, Ident: ident}
 }
 
-// SetPos sets the position. NewIdentifier is a public method so we can't modify its signature.
+// SetPos sets the position. [NewIdentifier] is a public method so we can't modify its signature.
 // Chained for convenience.
 // TODO: fix one day?
 func (i *IdentifierNode) SetPos(pos Pos) *IdentifierNode {
@@ -358,7 +363,7 @@ func (i *IdentifierNode) SetPos(pos Pos) *IdentifierNode {
 	return i
 }
 
-// SetTree sets the parent tree for the node. NewIdentifier is a public method so we can't modify its signature.
+// SetTree sets the parent tree for the node. [NewIdentifier] is a public method so we can't modify its signature.
 // Chained for convenience.
 // TODO: fix one day?
 func (i *IdentifierNode) SetTree(t *Tree) *IdentifierNode {
@@ -788,7 +793,7 @@ func (t *Tree) newEnd(pos Pos) *endNode {
 }
 
 func (e *endNode) String() string {
-	return "{{end}}"
+	return e.tr.leftDelim + "end" + e.tr.rightDelim
 }
 
 func (e *endNode) writeTo(sb *strings.Builder) {
@@ -820,7 +825,7 @@ func (e *elseNode) Type() NodeType {
 }
 
 func (e *elseNode) String() string {
-	return "{{else}}"
+	return e.tr.leftDelim + "else" + e.tr.rightDelim
 }
 
 func (e *elseNode) writeTo(sb *strings.Builder) {
@@ -864,17 +869,21 @@ func (b *BranchNode) writeTo(sb *strings.Builder) {
 	default:
 		panic("unknown branch type")
 	}
-	sb.WriteString("{{")
+	sb.WriteString(b.tr.leftDelim)
 	sb.WriteString(name)
 	sb.WriteByte(' ')
 	b.Pipe.writeTo(sb)
-	sb.WriteString("}}")
+	sb.WriteString(b.tr.rightDelim)
 	b.List.writeTo(sb)
 	if b.ElseList != nil {
-		sb.WriteString("{{else}}")
+		sb.WriteString(b.tr.leftDelim)
+		sb.WriteString("else")
+		sb.WriteString(b.tr.rightDelim)
 		b.ElseList.writeTo(sb)
 	}
-	sb.WriteString("{{end}}")
+	sb.WriteString(b.tr.leftDelim)
+	sb.WriteString("end")
+	sb.WriteString(b.tr.rightDelim)
 }
 
 func (b *BranchNode) tree() *Tree {
@@ -906,6 +915,40 @@ func (t *Tree) newIf(pos Pos, line int, pipe *PipeNode, list, elseList *ListNode
 func (i *IfNode) Copy() Node {
 	return i.tr.newIf(i.Pos, i.Line, i.Pipe.CopyPipe(), i.List.CopyList(), i.ElseList.CopyList())
 }
+
+// BreakNode represents a {{break}} action.
+type BreakNode struct {
+	tr *Tree
+	NodeType
+	Pos
+	Line int
+}
+
+func (t *Tree) newBreak(pos Pos, line int) *BreakNode {
+	return &BreakNode{tr: t, NodeType: NodeBreak, Pos: pos, Line: line}
+}
+
+func (b *BreakNode) Copy() Node                  { return b.tr.newBreak(b.Pos, b.Line) }
+func (b *BreakNode) String() string              { return b.tr.leftDelim + "break" + b.tr.rightDelim }
+func (b *BreakNode) tree() *Tree                 { return b.tr }
+func (b *BreakNode) writeTo(sb *strings.Builder) { sb.WriteString(b.String()) }
+
+// ContinueNode represents a {{continue}} action.
+type ContinueNode struct {
+	tr *Tree
+	NodeType
+	Pos
+	Line int
+}
+
+func (t *Tree) newContinue(pos Pos, line int) *ContinueNode {
+	return &ContinueNode{tr: t, NodeType: NodeContinue, Pos: pos, Line: line}
+}
+
+func (c *ContinueNode) Copy() Node                  { return c.tr.newContinue(c.Pos, c.Line) }
+func (c *ContinueNode) String() string              { return c.tr.leftDelim + "continue" + c.tr.rightDelim }
+func (c *ContinueNode) tree() *Tree                 { return c.tr }
+func (c *ContinueNode) writeTo(sb *strings.Builder) { sb.WriteString(c.String()) }
 
 // RangeNode represents a {{range}} action and its commands.
 type RangeNode struct {
@@ -954,13 +997,14 @@ func (t *TemplateNode) String() string {
 }
 
 func (t *TemplateNode) writeTo(sb *strings.Builder) {
-	sb.WriteString("{{template ")
+	sb.WriteString(t.tr.leftDelim)
+	sb.WriteString("template ")
 	sb.WriteString(strconv.Quote(t.Name))
 	if t.Pipe != nil {
 		sb.WriteByte(' ')
 		t.Pipe.writeTo(sb)
 	}
-	sb.WriteString("}}")
+	sb.WriteString(t.tr.rightDelim)
 }
 
 func (t *TemplateNode) tree() *Tree {

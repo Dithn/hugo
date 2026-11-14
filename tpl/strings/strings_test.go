@@ -15,16 +15,18 @@ package strings
 
 import (
 	"html/template"
+	stds "strings"
 	"testing"
 
-	"github.com/gohugoio/hugo/config"
-	"github.com/gohugoio/hugo/deps"
-
 	qt "github.com/frankban/quicktest"
+	"github.com/gohugoio/hugo/config/testconfig"
+	"github.com/gohugoio/hugo/deps"
 	"github.com/spf13/cast"
 )
 
-var ns = New(&deps.Deps{Cfg: config.New()})
+var ns = New(&deps.Deps{
+	Conf: testconfig.GetTestConfig(nil, nil),
+})
 
 type tstNoStringer struct{}
 
@@ -33,8 +35,8 @@ func TestChomp(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		expect interface{}
+		s      any
+		expect any
 	}{
 		{"\n a\n", "\n a"},
 		{"\n a\n\n", "\n a"},
@@ -68,8 +70,8 @@ func TestContains(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		substr interface{}
+		s      any
+		substr any
 		expect bool
 		isErr  bool
 	}{
@@ -106,8 +108,8 @@ func TestContainsAny(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		substr interface{}
+		s      any
+		substr any
 		expect bool
 		isErr  bool
 	}{
@@ -145,13 +147,47 @@ func TestContainsAny(t *testing.T) {
 	}
 }
 
+func TestContainsNonSpace(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+
+	for _, test := range []struct {
+		s      any
+		expect bool
+		isErr  bool
+	}{
+		{"", false, false},
+		{" ", false, false},
+		{"        ", false, false},
+		{"\t", false, false},
+		{"\r", false, false},
+		{"a", true, false},
+		{"    a", true, false},
+		{"a\n", true, false},
+		// error
+		{tstNoStringer{}, false, true},
+	} {
+
+		result, err := ns.ContainsNonSpace(test.s)
+
+		if test.isErr {
+			c.Assert(err, qt.IsNotNil)
+			continue
+		}
+
+		c.Assert(err, qt.IsNil)
+		c.Assert(result, qt.Equals, test.expect)
+
+	}
+}
+
 func TestCountRunes(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		expect interface{}
+		s      any
+		expect any
 	}{
 		{"foo bar", 6},
 		{"旁边", 2},
@@ -177,8 +213,8 @@ func TestRuneCount(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		expect interface{}
+		s      any
+		expect any
 	}{
 		{"foo bar", 7},
 		{"旁边", 2},
@@ -204,8 +240,8 @@ func TestCountWords(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		expect interface{}
+		s      any
+		expect any
 	}{
 		{"Do Be Do Be Do", 5},
 		{"旁边", 2},
@@ -234,9 +270,9 @@ func TestHasPrefix(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		prefix interface{}
-		expect interface{}
+		s      any
+		prefix any
+		expect any
 		isErr  bool
 	}{
 		{"abcd", "ab", true, false},
@@ -268,9 +304,9 @@ func TestHasSuffix(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		suffix interface{}
-		expect interface{}
+		s      any
+		suffix any
+		expect any
 		isErr  bool
 	}{
 		{"abcd", "cd", true, false},
@@ -302,11 +338,11 @@ func TestReplace(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		old    interface{}
-		new    interface{}
-		limit  interface{}
-		expect interface{}
+		s      any
+		old    any
+		new    any
+		limit  any
+		expect any
 	}{
 		{"aab", "a", "b", nil, "bbb"},
 		{"11a11", 1, 2, nil, "22a22"},
@@ -340,16 +376,101 @@ func TestReplace(t *testing.T) {
 	}
 }
 
+func TestReplacePairs(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+
+	for _, test := range []struct {
+		args   []any
+		expect string
+	}{
+		// slice form
+		{[]any{[]string{"a", "b"}, "aab"}, "bbb"},
+		{[]any{[]string{"a", "b", "b", "c"}, "aab"}, "bbc"},
+		{[]any{[]string{"app", "pear", "apple", "orange"}, "apple"}, "pearle"},
+		{[]any{[]string{}, "aab"}, "aab"},
+		{[]any{[]string{"remove-me", ""}, "text remove-me"}, "text "},
+		{[]any{[]string{"", "X"}, "ab"}, "XaXbX"},
+		{[]any{[]string{"a", "b"}, template.HTML("aab")}, "bbb"}, // template.HTML source
+		{[]any{[]string{"a", "b"}, 42}, "42"},                    // int source (cast: 42→"42")
+		{[]any{[]any{"a", "b"}, "s"}, "s"},                       // []any with all strings
+		{[]any{[]any{1, "one"}, "1abc"}, "oneabc"},               // []any with int pair (cast: 1→"1")
+		// inline form
+		{[]any{"a", "b", "aab"}, "bbb"},
+		{[]any{"a", "b", "b", "c", "aab"}, "bbc"},
+		{[]any{"app", "pear", "apple", "orange", "apple"}, "pearle"},
+		{[]any{"a", "b", ""}, ""},                      // empty source
+		{[]any{template.HTML("a"), "b", "aab"}, "bbb"}, // template.HTML pair
+		{[]any{1, "one", "1abc"}, "oneabc"},            // int pair (cast: 1→"1")
+	} {
+		result, err := ns.ReplacePairs(test.args...)
+		c.Assert(err, qt.IsNil)
+		c.Assert(result, qt.Equals, test.expect)
+	}
+
+	for _, test := range []struct {
+		args     []any
+		errMatch string
+	}{
+		{[]any{}, "requires at least 2"},                               // 0 args
+		{[]any{"s"}, "requires at least 2"},                            // 1 arg
+		{[]any{42, "s"}, "first must be a slice"},                      // 2 args: non-slice first arg
+		{[]any{"a", "s"}, "first must be a slice"},                     // 2 args: string first arg (not a slice)
+		{[]any{[]string{"a"}, "s"}, "uneven number"},                   // slice: odd pairs
+		{[]any{"a", "b", "c", "s"}, "uneven number"},                   // inline: 3 pairs
+		{[]any{[]any{tstNoStringer{}, "b"}, "s"}, "unable to cast"},    // non-castable slice element
+		{[]any{tstNoStringer{}, "b", "s"}, "unable to cast"},           // non-castable inline pair value
+		{[]any{[]string{"a", "b"}, tstNoStringer{}}, "unable to cast"}, // non-castable source
+	} {
+		_, err := ns.ReplacePairs(test.args...)
+		c.Assert(err, qt.ErrorMatches, ".*"+test.errMatch+".*")
+	}
+}
+
+func BenchmarkReplacePairs(b *testing.B) {
+	twoPairs := []string{"a", "A", "b", "B"}
+	threePairs := []string{"a", "A", "b", "B", "c", "C"}
+	s := "aabbcc"
+
+	b.Run("TwoPairs/cached", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			ns.ReplacePairs(twoPairs, s)
+		}
+	})
+
+	b.Run("TwoPairs/uncached", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			stds.NewReplacer(twoPairs...).Replace(s)
+		}
+	})
+
+	b.Run("ThreePairs/cached", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			ns.ReplacePairs(threePairs, s)
+		}
+	})
+
+	b.Run("ThreePairs/uncached", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			stds.NewReplacer(threePairs...).Replace(s)
+		}
+	})
+}
+
 func TestSliceString(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
 	var err error
 	for _, test := range []struct {
-		v1     interface{}
-		v2     interface{}
-		v3     interface{}
-		expect interface{}
+		v1     any
+		v2     any
+		v3     any
+		expect any
 	}{
 		{"abc", 1, 2, "b"},
 		{"abc", 1, 3, "bc"},
@@ -408,9 +529,9 @@ func TestSplit(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		v1     interface{}
+		v1     any
 		v2     string
-		expect interface{}
+		expect any
 	}{
 		{"a, b", ", ", []string{"a", "b"}},
 		{"a & b & c", " & ", []string{"a", "b", "c"}},
@@ -437,10 +558,10 @@ func TestSubstr(t *testing.T) {
 
 	var err error
 	for _, test := range []struct {
-		v1     interface{}
-		v2     interface{}
-		v3     interface{}
-		expect interface{}
+		v1     any
+		v2     any
+		v3     any
+		expect any
 	}{
 		{"abc", 1, 2, "bc"},
 		{"abc", 0, 1, "a"},
@@ -511,8 +632,8 @@ func TestTitle(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		expect interface{}
+		s      any
+		expect any
 	}{
 		{"test", "Test"},
 		{template.HTML("hypertext"), "Hypertext"},
@@ -538,8 +659,8 @@ func TestToLower(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		expect interface{}
+		s      any
+		expect any
 	}{
 		{"TEST", "test"},
 		{template.HTML("LoWeR"), "lower"},
@@ -565,8 +686,8 @@ func TestToUpper(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		expect interface{}
+		s      any
+		expect any
 	}{
 		{"test", "TEST"},
 		{template.HTML("UpPeR"), "UPPER"},
@@ -592,9 +713,9 @@ func TestTrim(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		cutset interface{}
-		expect interface{}
+		s      any
+		cutset any
+		expect any
 	}{
 		{"abba", "a", "bb"},
 		{"abba", "ab", ""},
@@ -626,9 +747,9 @@ func TestTrimLeft(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		cutset interface{}
-		expect interface{}
+		s      any
+		cutset any
+		expect any
 	}{
 		{"abba", "a", "bba"},
 		{"abba", "ab", ""},
@@ -661,9 +782,9 @@ func TestTrimPrefix(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		prefix interface{}
-		expect interface{}
+		s      any
+		prefix any
+		expect any
 	}{
 		{"aabbaa", "a", "abbaa"},
 		{"aabb", "b", "aabb"},
@@ -691,9 +812,9 @@ func TestTrimRight(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		cutset interface{}
-		expect interface{}
+		s      any
+		cutset any
+		expect any
 	}{
 		{"abba", "a", "abb"},
 		{"abba", "ab", ""},
@@ -726,9 +847,9 @@ func TestTrimSuffix(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		suffix interface{}
-		expect interface{}
+		s      any
+		suffix any
+		expect any
 	}{
 		{"aabbaa", "a", "aabba"},
 		{"aabb", "b", "aab"},
@@ -756,9 +877,9 @@ func TestRepeat(t *testing.T) {
 	c := qt.New(t)
 
 	for _, test := range []struct {
-		s      interface{}
-		n      interface{}
-		expect interface{}
+		s      any
+		n      any
+		expect any
 	}{
 		{"yo", "2", "yoyo"},
 		{"~", "16", "~~~~~~~~~~~~~~~~"},
@@ -775,6 +896,67 @@ func TestRepeat(t *testing.T) {
 	} {
 
 		result, err := ns.Repeat(test.n, test.s)
+
+		if b, ok := test.expect.(bool); ok && !b {
+			c.Assert(err, qt.Not(qt.IsNil))
+			continue
+		}
+
+		c.Assert(err, qt.IsNil)
+		c.Assert(result, qt.Equals, test.expect)
+	}
+}
+
+func TestDiff(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+
+	for _, test := range []struct {
+		oldname string
+		old     any
+		newname string
+		new     any
+		expect  any
+	}{
+		{"old", "foo\n", "new", "bar\n", "diff old new\n--- old\n+++ new\n@@ -1,1 +1,1 @@\n-foo\n+bar\n"},
+		{"old", "foo\n", "new", "foo\n", ""},
+		{"old", "foo\n", "new", "", "diff old new\n--- old\n+++ new\n@@ -1,1 +0,0 @@\n-foo\n"},
+		{"old", "foo\n", "new", nil, "diff old new\n--- old\n+++ new\n@@ -1,1 +0,0 @@\n-foo\n"},
+		{"old", "", "new", "", ""},
+		// errors
+		{"old", tstNoStringer{}, "new", "foo", false},
+		{"old", "foo", "new", tstNoStringer{}, false},
+	} {
+
+		result, err := ns.Diff(test.oldname, test.old, test.newname, test.new)
+
+		if b, ok := test.expect.(bool); ok && !b {
+			c.Assert(err, qt.Not(qt.IsNil))
+			continue
+		}
+
+		c.Assert(err, qt.IsNil)
+		c.Assert(result, qt.Equals, test.expect)
+
+	}
+}
+
+func TestTrimSpace(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+
+	for _, test := range []struct {
+		s      any
+		expect any
+	}{
+		{"\n\r test \n\r", "test"},
+		{template.HTML("\n\r test \n\r"), "test"},
+		{[]byte("\n\r test \n\r"), "test"},
+		// errors
+		{tstNoStringer{}, false},
+	} {
+
+		result, err := ns.TrimSpace(test.s)
 
 		if b, ok := test.expect.(bool); ok && !b {
 			c.Assert(err, qt.Not(qt.IsNil))

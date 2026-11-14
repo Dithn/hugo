@@ -14,16 +14,16 @@
 package compare
 
 import (
+	"math"
 	"path"
 	"reflect"
 	"runtime"
 	"testing"
 	"time"
 
-	"github.com/gohugoio/hugo/htesting/hqt"
-
 	qt "github.com/frankban/quicktest"
-	"github.com/gohugoio/hugo/common/hugo"
+	"github.com/gohugoio/hugo/common/version"
+	"github.com/gohugoio/hugo/htesting/hqt"
 	"github.com/spf13/cast"
 )
 
@@ -49,7 +49,7 @@ type (
 	tstEqerType2 string
 )
 
-func (t tstEqerType2) Eq(other interface{}) bool {
+func (t tstEqerType2) Eq(other any) bool {
 	return cast.ToString(t) == cast.ToString(other)
 }
 
@@ -57,7 +57,7 @@ func (t tstEqerType2) String() string {
 	return string(t)
 }
 
-func (t tstEqerType1) Eq(other interface{}) bool {
+func (t tstEqerType1) Eq(other any) bool {
 	return cast.ToString(t) == cast.ToString(other)
 }
 
@@ -88,12 +88,12 @@ func TestDefaultFunc(t *testing.T) {
 
 	then := time.Now()
 	now := time.Now()
-	ns := New(false)
+	ns := New(time.UTC, false)
 
 	for i, test := range []struct {
-		dflt   interface{}
-		given  interface{}
-		expect interface{}
+		dflt   any
+		given  any
+		expect any
 	}{
 		{true, false, false},
 		{"5", 0, "5"},
@@ -147,35 +147,35 @@ func TestDefaultFunc(t *testing.T) {
 func TestCompare(t *testing.T) {
 	t.Parallel()
 
-	n := New(false)
+	n := New(time.UTC, false)
 
-	twoEq := func(a, b interface{}) bool {
+	twoEq := func(a, b any) bool {
 		return n.Eq(a, b)
 	}
 
-	twoGt := func(a, b interface{}) bool {
+	twoGt := func(a, b any) bool {
 		return n.Gt(a, b)
 	}
 
-	twoLt := func(a, b interface{}) bool {
+	twoLt := func(a, b any) bool {
 		return n.Lt(a, b)
 	}
 
-	twoGe := func(a, b interface{}) bool {
+	twoGe := func(a, b any) bool {
 		return n.Ge(a, b)
 	}
 
-	twoLe := func(a, b interface{}) bool {
+	twoLe := func(a, b any) bool {
 		return n.Le(a, b)
 	}
 
-	twoNe := func(a, b interface{}) bool {
+	twoNe := func(a, b any) bool {
 		return n.Ne(a, b)
 	}
 
 	for _, test := range []struct {
 		tstCompareType
-		funcUnderTest func(a, b interface{}) bool
+		funcUnderTest func(a, b any) bool
 	}{
 		{tstGt, twoGt},
 		{tstLt, twoLt},
@@ -188,10 +188,10 @@ func TestCompare(t *testing.T) {
 	}
 }
 
-func doTestCompare(t *testing.T, tp tstCompareType, funcUnderTest func(a, b interface{}) bool) {
+func doTestCompare(t *testing.T, tp tstCompareType, funcUnderTest func(a, b any) bool) {
 	for i, test := range []struct {
-		left            interface{}
-		right           interface{}
+		left            any
+		right           any
 		expectIndicator int
 	}{
 		{5, 8, -1},
@@ -199,6 +199,21 @@ func doTestCompare(t *testing.T, tp tstCompareType, funcUnderTest func(a, b inte
 		{5, 5, 0},
 		{int(5), int64(5), 0},
 		{int32(5), int(5), 0},
+		{int16(4), 4, 0},
+		{uint8(4), 4, 0},
+		{uint16(4), 4, 0},
+		{uint16(4), 4, 0},
+		{uint32(4), uint16(4), 0},
+		{uint32(4), uint16(3), 1},
+		{uint64(4), 4, 0},
+		{4, uint64(4), 0},
+		{uint64(4), 5, -1},
+		{5, uint64(4), 1},
+		{uint64(5), uint64(4), 1},
+		{uint64(4), uint64(5), -1},
+		{uint64(5), uint64(5), 0},
+		{uint64(math.MaxUint32), uint32(math.MaxUint32), 0},
+		{uint64(math.MaxUint16), int(math.MaxUint16), 0},
 		{int16(4), int(5), -1},
 		{uint(15), uint64(15), 0},
 		{-2, 1, -1},
@@ -206,6 +221,23 @@ func doTestCompare(t *testing.T, tp tstCompareType, funcUnderTest func(a, b inte
 		{0.0, 1.23, -1},
 		{1.1, 1.1, 0},
 		{float32(1.0), float64(1.0), 0},
+		{1, 1.0, 0},
+		{1.0, 1, 0},
+		{0, 0.0, 0},
+		{-1, -1.0, 0},
+		{int64(3), float64(3), 0},
+		{uint(4), 4.0, 0},
+		{1, float32(1.0), 0},
+		{float32(1.0), 1, 0},
+		{1, 1.5, -1},
+		{1.5, 1, 1},
+		{2, 1.5, 1},
+		{int64(1<<53 + 1), float64(1 << 53), 1},
+		{float64(1 << 53), int64(1<<53 + 1), -1},
+		{int64(1<<53 + 1), uint64(1<<53 + 1), 0},
+		{-1, uint64(math.MaxUint64), -1},
+		{uint64(math.MaxUint64), -1, 1},
+		{uint64(math.MaxUint64), uint8(1), 1},
 		{1.23, 0.0, 1},
 		{"5", "5", 0},
 		{"8", "5", 1},
@@ -217,21 +249,23 @@ func doTestCompare(t *testing.T, tp tstCompareType, funcUnderTest func(a, b inte
 		{"a", "a", 0},
 		{"a", "b", -1},
 		{"b", "a", 1},
+		{"infinity", "infinity", 0},
+		{"nan", "nan", 0},
 		{tstEqerType1("a"), tstEqerType1("a"), 0},
 		{tstEqerType1("a"), tstEqerType2("a"), 0},
 		{tstEqerType2("a"), tstEqerType1("a"), 0},
 		{tstEqerType2("a"), tstEqerType1("b"), -1},
-		{hugo.MustParseVersion("0.32.1").Version(), hugo.MustParseVersion("0.32").Version(), 1},
-		{hugo.MustParseVersion("0.35").Version(), hugo.MustParseVersion("0.32").Version(), 1},
-		{hugo.MustParseVersion("0.36").Version(), hugo.MustParseVersion("0.36").Version(), 0},
-		{hugo.MustParseVersion("0.32").Version(), hugo.MustParseVersion("0.36").Version(), -1},
-		{hugo.MustParseVersion("0.32").Version(), "0.36", -1},
-		{"0.36", hugo.MustParseVersion("0.32").Version(), 1},
-		{"0.36", hugo.MustParseVersion("0.36").Version(), 0},
-		{"0.37", hugo.MustParseVersion("0.37-DEV").Version(), 1},
-		{"0.37-DEV", hugo.MustParseVersion("0.37").Version(), -1},
-		{"0.36", hugo.MustParseVersion("0.37-DEV").Version(), -1},
-		{"0.37-DEV", hugo.MustParseVersion("0.37-DEV").Version(), 0},
+		{version.MustParseVersion("0.32.1").Version(), version.MustParseVersion("0.32").Version(), 1},
+		{version.MustParseVersion("0.35").Version(), version.MustParseVersion("0.32").Version(), 1},
+		{version.MustParseVersion("0.36").Version(), version.MustParseVersion("0.36").Version(), 0},
+		{version.MustParseVersion("0.32").Version(), version.MustParseVersion("0.36").Version(), -1},
+		{version.MustParseVersion("0.32").Version(), "0.36", -1},
+		{"0.36", version.MustParseVersion("0.32").Version(), 1},
+		{"0.36", version.MustParseVersion("0.36").Version(), 0},
+		{"0.37", version.MustParseVersion("0.37-DEV").Version(), 1},
+		{"0.37-DEV", version.MustParseVersion("0.37").Version(), -1},
+		{"0.36", version.MustParseVersion("0.37-DEV").Version(), -1},
+		{"0.37-DEV", version.MustParseVersion("0.37-DEV").Version(), 0},
 		// https://github.com/gohugoio/hugo/issues/5905
 		{nil, nil, 0},
 		{testT.NonEmptyInterfaceNil, nil, 0},
@@ -269,19 +303,45 @@ func TestEqualExtend(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(false)
+	ns := New(time.UTC, false)
+	one := 1
 
 	for _, test := range []struct {
-		first  interface{}
-		others []interface{}
+		first  any
+		others []any
 		expect bool
 	}{
-		{1, []interface{}{1, 2}, true},
-		{1, []interface{}{2, 1}, true},
-		{1, []interface{}{2, 3}, false},
-		{tstEqerType1("a"), []interface{}{tstEqerType1("a"), tstEqerType1("b")}, true},
-		{tstEqerType1("a"), []interface{}{tstEqerType1("b"), tstEqerType1("a")}, true},
-		{tstEqerType1("a"), []interface{}{tstEqerType1("b"), tstEqerType1("c")}, false},
+		{1, []any{1, 2}, true},
+		{1, []any{2, 1}, true},
+		{1, []any{2, 3}, false},
+		{1, []any{2, 1.0}, true},
+		{1.0, []any{2, 1}, true},
+		{1, []any{1.5}, false},
+		{uint64(math.MaxUint64), []any{-1}, false},
+		{-1, []any{uint64(math.MaxUint64)}, false},
+		{float64(9007199254740992), []any{int64(9007199254740993)}, false},
+		{int64(9007199254740993), []any{float64(9007199254740992)}, false},
+		{float64(9007199254740992), []any{int64(9007199254740992)}, true},
+		{int64(9007199254740992), []any{float64(9007199254740992)}, true},
+		{float32(16777216), []any{int64(16777217)}, false},
+		{int64(16777217), []any{float32(16777216)}, false},
+		{float64(3.14), []any{float32(3.14)}, false},
+		{float32(3.14), []any{float64(3.14)}, false},
+		{float64(0.5), []any{float32(0.5)}, true},
+		{float32(0.5), []any{float64(0.5)}, true},
+		{stringType("a"), []any{"b", "a"}, true},
+		{[]int{1, 2}, []any{[]int{1, 2}}, true},
+		{[]int{1, 2}, []any{[]int{2, 1}}, false},
+		{map[string]any{"a": []int{1}}, []any{map[string]any{"a": []int{1}}}, true},
+		{struct{ V any }{[]int{1}}, []any{struct{ V any }{[]int{1}}}, true},
+		{&T{}, []any{&T{}}, true},
+		{T{}, []any{&T{}}, false},
+		{&T{}, []any{T{}}, false},
+		{1, []any{&one}, false},
+		{&one, []any{1}, false},
+		{tstEqerType1("a"), []any{tstEqerType1("a"), tstEqerType1("b")}, true},
+		{tstEqerType1("a"), []any{tstEqerType1("b"), tstEqerType1("a")}, true},
+		{tstEqerType1("a"), []any{tstEqerType1("b"), tstEqerType1("c")}, false},
 	} {
 
 		result := ns.Eq(test.first, test.others...)
@@ -294,16 +354,16 @@ func TestNotEqualExtend(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(false)
+	ns := New(time.UTC, false)
 
 	for _, test := range []struct {
-		first  interface{}
-		others []interface{}
+		first  any
+		others []any
 		expect bool
 	}{
-		{1, []interface{}{2, 3}, true},
-		{1, []interface{}{2, 1}, false},
-		{1, []interface{}{1, 2}, false},
+		{1, []any{2, 3}, true},
+		{1, []any{2, 1}, false},
+		{1, []any{1, 2}, false},
 	} {
 		result := ns.Ne(test.first, test.others...)
 		c.Assert(result, qt.Equals, test.expect)
@@ -314,17 +374,17 @@ func TestGreaterEqualExtend(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(false)
+	ns := New(time.UTC, false)
 
 	for _, test := range []struct {
-		first  interface{}
-		others []interface{}
+		first  any
+		others []any
 		expect bool
 	}{
-		{5, []interface{}{2, 3}, true},
-		{5, []interface{}{5, 5}, true},
-		{3, []interface{}{4, 2}, false},
-		{3, []interface{}{2, 4}, false},
+		{5, []any{2, 3}, true},
+		{5, []any{5, 5}, true},
+		{3, []any{4, 2}, false},
+		{3, []any{2, 4}, false},
 	} {
 		result := ns.Ge(test.first, test.others...)
 		c.Assert(result, qt.Equals, test.expect)
@@ -335,16 +395,16 @@ func TestGreaterThanExtend(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(false)
+	ns := New(time.UTC, false)
 
 	for _, test := range []struct {
-		first  interface{}
-		others []interface{}
+		first  any
+		others []any
 		expect bool
 	}{
-		{5, []interface{}{2, 3}, true},
-		{5, []interface{}{5, 4}, false},
-		{3, []interface{}{4, 2}, false},
+		{5, []any{2, 3}, true},
+		{5, []any{5, 4}, false},
+		{3, []any{4, 2}, false},
 	} {
 		result := ns.Gt(test.first, test.others...)
 		c.Assert(result, qt.Equals, test.expect)
@@ -355,17 +415,17 @@ func TestLessEqualExtend(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(false)
+	ns := New(time.UTC, false)
 
 	for _, test := range []struct {
-		first  interface{}
-		others []interface{}
+		first  any
+		others []any
 		expect bool
 	}{
-		{1, []interface{}{2, 3}, true},
-		{1, []interface{}{1, 2}, true},
-		{2, []interface{}{1, 2}, false},
-		{3, []interface{}{2, 4}, false},
+		{1, []any{2, 3}, true},
+		{1, []any{1, 2}, true},
+		{2, []any{1, 2}, false},
+		{3, []any{2, 4}, false},
 	} {
 		result := ns.Le(test.first, test.others...)
 		c.Assert(result, qt.Equals, test.expect)
@@ -376,17 +436,17 @@ func TestLessThanExtend(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
-	ns := New(false)
+	ns := New(time.UTC, false)
 
 	for _, test := range []struct {
-		first  interface{}
-		others []interface{}
+		first  any
+		others []any
 		expect bool
 	}{
-		{1, []interface{}{2, 3}, true},
-		{1, []interface{}{1, 2}, false},
-		{2, []interface{}{1, 2}, false},
-		{3, []interface{}{2, 4}, false},
+		{1, []any{2, 3}, true},
+		{1, []any{1, 2}, false},
+		{2, []any{1, 2}, false},
+		{3, []any{2, 4}, false},
 	} {
 		result := ns.Lt(test.first, test.others...)
 		c.Assert(result, qt.Equals, test.expect)
@@ -395,7 +455,7 @@ func TestLessThanExtend(t *testing.T) {
 
 func TestCase(t *testing.T) {
 	c := qt.New(t)
-	n := New(false)
+	n := New(time.UTC, false)
 
 	c.Assert(n.Eq("az", "az"), qt.Equals, true)
 	c.Assert(n.Eq("az", stringType("az")), qt.Equals, true)
@@ -403,7 +463,7 @@ func TestCase(t *testing.T) {
 
 func TestStringType(t *testing.T) {
 	c := qt.New(t)
-	n := New(true)
+	n := New(time.UTC, true)
 
 	c.Assert(n.Lt("az", "Za"), qt.Equals, true)
 	c.Assert(n.Gt("ab", "Ab"), qt.Equals, true)
@@ -411,11 +471,12 @@ func TestStringType(t *testing.T) {
 
 func TestTimeUnix(t *testing.T) {
 	t.Parallel()
+	n := New(time.UTC, false)
 	var sec int64 = 1234567890
 	tv := reflect.ValueOf(time.Unix(sec, 0))
 	i := 1
 
-	res := toTimeUnix(tv)
+	res := n.toTimeUnix(tv)
 	if sec != res {
 		t.Errorf("[%d] timeUnix got %v but expected %v", i, res, sec)
 	}
@@ -428,15 +489,55 @@ func TestTimeUnix(t *testing.T) {
 			}
 		}()
 		iv := reflect.ValueOf(sec)
-		toTimeUnix(iv)
+		n.toTimeUnix(iv)
 	}(t)
 }
 
 func TestConditional(t *testing.T) {
+	t.Parallel()
 	c := qt.New(t)
-	n := New(false)
-	a, b := "a", "b"
+	ns := New(time.UTC, false)
 
-	c.Assert(n.Conditional(true, a, b), qt.Equals, a)
-	c.Assert(n.Conditional(false, a, b), qt.Equals, b)
+	type args struct {
+		cond any
+		v1   any
+		v2   any
+	}
+	tests := []struct {
+		name string
+		args args
+		want any
+	}{
+		{"a", args{cond: true, v1: "true", v2: "false"}, "true"},
+		{"b", args{cond: false, v1: "true", v2: "false"}, "false"},
+		{"c", args{cond: 1, v1: "true", v2: "false"}, "true"},
+		{"d", args{cond: 0, v1: "true", v2: "false"}, "false"},
+		{"e", args{cond: "foo", v1: "true", v2: "false"}, "true"},
+		{"f", args{cond: "", v1: "true", v2: "false"}, "false"},
+		{"g", args{cond: []int{6, 7}, v1: "true", v2: "false"}, "true"},
+		{"h", args{cond: []int{}, v1: "true", v2: "false"}, "false"},
+		{"i", args{cond: nil, v1: "true", v2: "false"}, "false"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c.Assert(ns.Conditional(tt.args.cond, tt.args.v1, tt.args.v2), qt.Equals, tt.want)
+		})
+	}
+}
+
+// Issue 9462
+func TestComparisonArgCount(t *testing.T) {
+	t.Parallel()
+	c := qt.New(t)
+
+	ns := New(time.UTC, false)
+
+	panicMsg := "missing arguments for comparison"
+
+	c.Assert(func() { ns.Eq(1) }, qt.PanicMatches, panicMsg)
+	c.Assert(func() { ns.Ge(1) }, qt.PanicMatches, panicMsg)
+	c.Assert(func() { ns.Gt(1) }, qt.PanicMatches, panicMsg)
+	c.Assert(func() { ns.Le(1) }, qt.PanicMatches, panicMsg)
+	c.Assert(func() { ns.Lt(1) }, qt.PanicMatches, panicMsg)
+	c.Assert(func() { ns.Ne(1) }, qt.PanicMatches, panicMsg)
 }

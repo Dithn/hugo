@@ -14,23 +14,26 @@
 package i18n
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/gohugoio/hugo/common/paths"
+	"github.com/gohugoio/hugo/config"
+	"github.com/gohugoio/hugo/langs"
+	"github.com/gohugoio/hugo/parser/metadecoders"
 
 	"github.com/gohugoio/hugo/common/herrors"
 	"golang.org/x/text/language"
-	yaml "gopkg.in/yaml.v2"
 
 	"github.com/gohugoio/go-i18n/v2/i18n"
-	"github.com/gohugoio/hugo/helpers"
 	toml "github.com/pelletier/go-toml/v2"
 
 	"github.com/gohugoio/hugo/deps"
 	"github.com/gohugoio/hugo/hugofs"
 	"github.com/gohugoio/hugo/source"
-	_errors "github.com/pkg/errors"
 )
 
 // TranslationProvider provides translation handling, i.e. loading
@@ -45,49 +48,70 @@ func NewTranslationProvider() *TranslationProvider {
 }
 
 // Update updates the i18n func in the provided Deps.
-func (tp *TranslationProvider) Update(d *deps.Deps) error {
-	spec := source.NewSourceSpec(d.PathSpec, nil, nil)
+func (tp *TranslationProvider) NewResource(dst *deps.Deps) error {
+	defaultLangTag, err := language.Parse(dst.Conf.DefaultContentLanguage())
+	if err != nil {
+		defaultLangTag = language.English
+	}
+	bundle := i18n.NewBundle(defaultLangTag)
 
-	bundle := i18n.NewBundle(language.English)
 	bundle.RegisterUnmarshalFunc("toml", toml.Unmarshal)
-	bundle.RegisterUnmarshalFunc("yaml", yaml.Unmarshal)
-	bundle.RegisterUnmarshalFunc("yml", yaml.Unmarshal)
+	bundle.RegisterUnmarshalFunc("yaml", metadecoders.UnmarshalYaml)
+	bundle.RegisterUnmarshalFunc("yml", metadecoders.UnmarshalYaml)
 	bundle.RegisterUnmarshalFunc("json", json.Unmarshal)
 
-	// The source dirs are ordered so the most important comes first. Since this is a
-	// last key win situation, we have to reverse the iteration order.
-	dirs := d.BaseFs.I18n.Dirs
-	for i := len(dirs) - 1; i >= 0; i-- {
-		dir := dirs[i]
-		src := spec.NewFilesystemFromFileMetaInfo(dir)
-		files, err := src.Files()
-		if err != nil {
+	var files []hugofs.FileMetaInfo
+	w := hugofs.NewWalkway(
+		hugofs.WalkwayConfig{
+			Fs:         dst.BaseFs.I18n.Fs,
+			IgnoreFile: dst.SourceSpec.IgnoreFile,
+			PathParser: dst.SourceSpec.Cfg.PathParser(),
+			WalkFn: func(ctx context.Context, path string, info hugofs.FileMetaInfo) error {
+				if info.IsDir() {
+					return nil
+				}
+				files = append(files, info)
+				return nil
+			},
+		},
+	)
+
+	if err := w.Walk(); err != nil {
+		return err
+	}
+
+	// Register base tags (e.g. "de") before their subtag variants (e.g. "de-DE"),
+	// or the fallback chain breaks. The sort must be stable to keep the
+	// project/module precedence from the walk. See issues #7982 and #15518.
+	sort.SliceStable(files, func(i, j int) bool {
+		si := files[i].Meta().PathInfo.NameNoExt()
+		sj := files[j].Meta().PathInfo.NameNoExt()
+		return strings.Count(si, "-") < strings.Count(sj, "-")
+	})
+
+	for _, info := range files {
+		if err := addTranslationFile(bundle, source.NewFileInfo(info)); err != nil {
 			return err
-		}
-		for _, file := range files {
-			if err := addTranslationFile(bundle, file); err != nil {
-				return err
-			}
 		}
 	}
 
-	tp.t = NewTranslator(bundle, d.Cfg, d.Log)
+	tp.t = NewTranslator(bundle, dst.Conf, dst.Log)
 
-	d.Translate = tp.t.Func(d.Language.Lang)
+	defaultLang := defaultLanguage(dst.Conf)
+	for _, l := range dst.Conf.Languages().(langs.Languages) {
+		langs.SetTranslateFunc(l, tp.getTranslateFunc(l, defaultLang))
+	}
 
 	return nil
 }
 
 const artificialLangTagPrefix = "art-x-"
 
-func addTranslationFile(bundle *i18n.Bundle, r source.File) error {
-	f, err := r.FileInfo().Meta().Open()
+func addTranslationFile(bundle *i18n.Bundle, r *source.File) error {
+	b, err := r.FileInfo().Meta().ReadAll()
 	if err != nil {
-		return _errors.Wrapf(err, "failed to open translations file %q:", r.LogicalName())
+		return fmt.Errorf("failed to read translations file %q:: %w", r.LogicalName(), err)
 	}
-
-	b := helpers.ReaderToBytes(f)
-	f.Close()
 
 	name := r.LogicalName()
 	lang := paths.Filename(name)
@@ -96,7 +120,7 @@ func addTranslationFile(bundle *i18n.Bundle, r source.File) error {
 		try := artificialLangTagPrefix + lang
 		_, err = language.Parse(try)
 		if err != nil {
-			return _errors.Errorf("%q %s.", try, err)
+			return fmt.Errorf("%q: %s", try, err)
 		}
 		name = artificialLangTagPrefix + name
 	}
@@ -111,26 +135,46 @@ func addTranslationFile(bundle *i18n.Bundle, r source.File) error {
 				return nil
 			}
 		}
-		return errWithFileContext(_errors.Wrapf(err, "failed to load translations"), r)
+		var guidance string
+		if strings.Contains(err.Error(), "mixed with unreserved keys") {
+			guidance = ": see the lang.Translate documentation for a list of reserved keys"
+		}
+		return errWithFileContext(fmt.Errorf("failed to load translations: %w%s", err, guidance), r)
 	}
 
 	return nil
 }
 
-// Clone sets the language func for the new language.
-func (tp *TranslationProvider) Clone(d *deps.Deps) error {
-	d.Translate = tp.t.Func(d.Language.Lang)
-
+// CloneResource is a no-op, the translate funcs are shared between sites.
+func (tp *TranslationProvider) CloneResource(dst, src *deps.Deps) error {
 	return nil
 }
 
-func errWithFileContext(inerr error, r source.File) error {
-	fim, ok := r.FileInfo().(hugofs.FileMetaInfo)
-	if !ok {
-		return inerr
+func defaultLanguage(conf config.AllProvider) *langs.Language {
+	key := conf.DefaultContentLanguage()
+	for _, l := range conf.Languages().(langs.Languages) {
+		if l.Lang == key {
+			return l
+		}
 	}
+	return conf.Language().(*langs.Language)
+}
 
-	meta := fim.Meta()
+// getTranslateFunc returns the translation function for the given language.
+// The lookup order is: current locale, current key, default locale, default key.
+func (tp *TranslationProvider) getTranslateFunc(current, defaultLang *langs.Language) langs.TranslateFunc {
+	for _, l := range []*langs.Language{current, defaultLang} {
+		for _, key := range []string{strings.ToLower(l.Locale()), l.Lang} {
+			if fn, ok := tp.t.Lookup(key); ok {
+				return fn
+			}
+		}
+	}
+	return tp.t.Func("en")
+}
+
+func errWithFileContext(inerr error, r *source.File) error {
+	meta := r.FileInfo().Meta()
 	realFilename := meta.Filename
 	f, err := meta.Open()
 	if err != nil {
@@ -138,11 +182,5 @@ func errWithFileContext(inerr error, r source.File) error {
 	}
 	defer f.Close()
 
-	err, _ = herrors.WithFileContext(
-		inerr,
-		realFilename,
-		f,
-		herrors.SimpleLineMatcher)
-
-	return err
+	return herrors.NewFileErrorFromName(inerr, realFilename).UpdateContent(f, nil)
 }

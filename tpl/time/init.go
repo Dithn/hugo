@@ -14,6 +14,7 @@
 package time
 
 import (
+	"context"
 	"errors"
 
 	"github.com/gohugoio/hugo/deps"
@@ -25,14 +26,15 @@ const name = "time"
 
 func init() {
 	f := func(d *deps.Deps) *internal.TemplateFuncsNamespace {
-		if d.Language == nil {
+		if d.Conf.Language() == nil {
 			panic("Language must be set")
 		}
-		ctx := New(langs.GetTranslator(d.Language), langs.GetLocation(d.Language))
+		lang := d.Conf.Language().(*langs.Language)
+		ctx := New(langs.GetTimeFormatter(lang), langs.GetLocation(lang), d)
 
 		ns := &internal.TemplateFuncsNamespace{
 			Name: name,
-			Context: func(args ...interface{}) (interface{}, error) {
+			Context: func(cctx context.Context, args ...any) (any, error) {
 				// Handle overlapping "time" namespace and func.
 				//
 				// If no args are passed to `time`, assume namespace usage and
@@ -50,22 +52,10 @@ func init() {
 
 				// 3 or more arguments. Currently not supported.
 				default:
-					return nil, errors.New("Invalid arguments supplied to `time`. Refer to time documentation: https://gohugo.io/functions/time/")
+					return nil, errors.New("invalid arguments supplied to `time`")
 				}
 			},
 		}
-
-		ns.AddMethodMapping(ctx.Format,
-			[]string{"dateFormat"},
-			[][2]string{
-				{`dateFormat: {{ dateFormat "Monday, Jan 2, 2006" "2015-01-21" }}`, `dateFormat: Wednesday, Jan 21, 2015`},
-			},
-		)
-
-		ns.AddMethodMapping(ctx.Now,
-			[]string{"now"},
-			[][2]string{},
-		)
 
 		ns.AddMethodMapping(ctx.AsTime,
 			nil,
@@ -79,6 +69,23 @@ func init() {
 			[][2]string{
 				{`{{ mul 60 60 | duration "second" }}`, `1h0m0s`},
 			},
+		)
+
+		ns.AddMethodMapping(ctx.Format,
+			[]string{"dateFormat"},
+			[][2]string{
+				{`dateFormat: {{ dateFormat "Monday, Jan 2, 2006" "2015-01-21" }}`, `dateFormat: Wednesday, Jan 21, 2015`},
+			},
+		)
+
+		ns.AddMethodMapping(ctx.In,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.Now,
+			[]string{"now"},
+			[][2]string{},
 		)
 
 		ns.AddMethodMapping(ctx.ParseDuration,

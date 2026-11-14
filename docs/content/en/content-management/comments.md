@@ -1,75 +1,85 @@
 ---
 title: Comments
-linktitle: Comments
-description: Hugo ships with an internal Disqus template, but this isn't the only commenting system that will work with your new Hugo website.
-date: 2017-02-01
-publishdate: 2017-02-01
-lastmod: 2017-03-09
-keywords: [sections,content,organization]
-categories: [project organization, fundamentals]
-menu:
-  docs:
-    parent: "content-management"
-    weight: 140
-weight: 140	#rem
-draft: false
-aliases: [/extras/comments/]
-toc: true
+description: Hugo ships with an embedded Disqus partial, but this isn't the only commenting system that will work with your new Hugo website.
+categories: []
+keywords: []
 ---
 
-Hugo ships with support for [Disqus](https://disqus.com/), a third-party service that provides comment and community capabilities to websites via JavaScript.
+Hugo ships with support for [Disqus][], a third-party service that provides comment and community capabilities to websites via JavaScript.
 
-Your theme may already support Disqus, but if not, it is easy to add to your templates via [Hugo's built-in Disqus partial][disquspartial].
+Your theme may already support Disqus, but if not, it is easy to add to your templates via Hugo's [embedded partial][].
 
 ## Add Disqus
 
-Hugo comes with all the code you need to load Disqus into your templates. Before adding Disqus to your site, you'll need to [set up an account][disqussetup].
+Hugo comes with all the code you need to load Disqus into your templates. Before adding Disqus to your site, you'll need to [set up an account][].
 
 ### Configure Disqus
 
-Disqus comments require you set a single value in your [site's configuration file][configuration] like so:
+Disqus comments require you set a single value in your project configuration:
 
-{{< code-toggle copy="false" >}}
-disqusShortname = "yourdiscussshortname"
+{{< code-toggle file=hugo >}}
+[services.disqus]
+shortname = 'your-disqus-shortname'
 {{</ code-toggle >}}
 
-For many websites, this is enough configuration. However, you also have the option to set the following in the [front matter][] of a single content file:
+For many websites, this is enough configuration. However, you also have the option to set the following in the front matter of a single content file:
 
-* `disqus_identifier`
-* `disqus_title`
-* `disqus_url`
+- `params.disqus_identifier`
+- `params.disqus_title`
+- `params.disqus_url`
 
-### Render Hugo's Built-in Disqus Partial Template
+### Render the partial
 
-Disqus has its own [internal template](https://gohugo.io/templates/internal/#disqus) available, to render it add the following code where you want comments to appear:
+To render it, add the following code where you want comments to appear:
 
-```
-{{ template "_internal/disqus.html" . }}
+```go-html-template
+{{ partial "disqus.html" . }}
 ```
 
 ## Alternatives
 
-These are some alternatives to Disqus:
+Commercial commenting systems:
 
-* [Cactus Comments](https://cactus.chat/docs/integrations/hugo/) (Open Source, Matrix appservice, Docker install)
-* [Commento](https://commento.io/) (Open Source, available as a service, local install, or docker image)
-* [Graph Comment](https://graphcomment.com/)
-* [Hyvor Talk](https://talk.hyvor.com/) (Available as a service)
-* [IntenseDebate](https://intensedebate.com/)
-* [Isso](https://posativ.org/isso/) (Self-hosted, Python) ([tutorial][issotutorial])
-* [Muut](https://muut.com/)
-* [Remark42](https://remark42.com/) (Open source, Golang, Easy to run docker)
-* [Staticman](https://staticman.net/)
-* [Talkyard](https://www.talkyard.io/blog-comments) (Open source, & serverless hosting)
-* [Utterances](https://utteranc.es/) (Open source, GitHub comments widget built on GitHub issues)
+- [Commentix][]
+- [Emote][]
+- [FastComments][]
+- [Graph Comment][]
+- [Hyvor Talk][]
+- [IntenseDebate][]
+- [ReplyBox][]
 
-[configuration]: /getting-started/configuration/
-[disquspartial]: /templates/partials/#disqus
-[disqussetup]: https://disqus.com/profile/signup/
-[forum]: https://discourse.gohugo.io
-[front matter]: /content-management/front-matter/
-[kaijuissue]: https://github.com/spf13/kaiju/issues/new
-[issotutorial]: https://stiobhart.net/2017-02-24-isso-comments/
-[partials]: /templates/partials/
-[MongoDB]: https://www.mongodb.com/
-[tweet]: https://twitter.com/spf13
+Open-source commenting systems:
+
+- [Cactus Comments][]
+- [Comentario][]
+- [Comma][]
+- [Discourse][]
+- [Giscus][]
+- [Isso][]
+- [Remark42][]
+- [Staticman][]
+- [Talkyard][]
+- [Utterances][]
+- [Zoomment][]
+
+[Cactus Comments]: https://cactus.chat/docs/integrations/hugo/
+[Comentario]: https://gitlab.com/comentario/comentario/
+[Comma]: https://github.com/Dieterbe/comma/
+[Commentix]: https://www.commentix.com/
+[Discourse]: https://meta.discourse.org/t/embed-discourse-comments-on-another-website-via-javascript/31963
+[Disqus]: https://disqus.com/
+[Emote]: https://emote.com/
+[FastComments]: https://fastcomments.com/commenting-system-for-hugo
+[Giscus]: https://giscus.app/
+[Graph Comment]: https://graphcomment.com/
+[Hyvor Talk]: https://talk.hyvor.com/
+[IntenseDebate]: https://intensedebate.com/
+[Isso]: https://isso-comments.de/
+[Remark42]: https://remark42.com/
+[ReplyBox]: https://getreplybox.com/
+[Staticman]: https://staticman.net/
+[Talkyard]: https://blog-comments.talkyard.io/
+[Utterances]: https://utteranc.es/
+[Zoomment]: https://zoomment.com/
+[embedded partial]: /templates/embedded/#disqus
+[set up an account]: https://disqus.com/profile/signup/

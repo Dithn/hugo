@@ -14,6 +14,8 @@
 package debug
 
 import (
+	"context"
+
 	"github.com/gohugoio/hugo/deps"
 	"github.com/gohugoio/hugo/tpl/internal"
 )
@@ -26,16 +28,44 @@ func init() {
 
 		ns := &internal.TemplateFuncsNamespace{
 			Name:    name,
-			Context: func(args ...interface{}) (interface{}, error) { return ctx, nil },
+			Context: func(cctx context.Context, args ...any) (any, error) { return ctx, nil },
 		}
 
 		ns.AddMethodMapping(ctx.Dump,
 			nil,
 			[][2]string{
-				{`{{- $m := newScratch -}}
-{{- $m.Set "Hugo" "Rocks!" -}}
-{{- $m.Values | debug.Dump | safeHTML -}}`, "map[string]interface {}{\n  \"Hugo\": \"Rocks!\",\n}"},
+				{`{{ $m := newScratch }}
+{{ $m.Set "Hugo" "Rocks!" }}
+{{ $m.Values | debug.Dump | safeHTML }}`, "{\n  \"Hugo\": \"Rocks!\"\n}"},
 			},
+		)
+
+		// For internal use only. Used in tests.
+		ns.AddMethodMapping(ctx.TestDeprecationErr,
+			nil,
+			[][2]string{},
+		)
+
+		// For internal use only. Used in tests.
+		ns.AddMethodMapping(ctx.TestDeprecationInfo,
+			nil,
+			[][2]string{},
+		)
+
+		// For internal use only. Used in tests.
+		ns.AddMethodMapping(ctx.TestDeprecationWarn,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.Timer,
+			nil,
+			[][2]string{},
+		)
+
+		ns.AddMethodMapping(ctx.VisualizeSpaces,
+			nil,
+			[][2]string{},
 		)
 
 		return ns

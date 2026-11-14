@@ -14,10 +14,14 @@
 package navigation
 
 import (
-	"github.com/gohugoio/hugo/common/maps"
-	"github.com/gohugoio/hugo/common/types"
+	"fmt"
+	"html/template"
+	"strings"
 
-	"github.com/pkg/errors"
+	"github.com/gohugoio/hugo/common/hmaps"
+	"github.com/gohugoio/hugo/common/types"
+	"github.com/mitchellh/mapstructure"
+
 	"github.com/spf13/cast"
 )
 
@@ -39,21 +43,16 @@ type MenuQueryProvider interface {
 	IsMenuCurrent(menuID string, inme *MenuEntry) bool
 }
 
-func PageMenusFromPage(p Page) (PageMenus, error) {
-	params := p.Params()
-
-	ms, ok := params["menus"]
-	if !ok {
-		ms, ok = params["menu"]
+// PageMenusFromPage creates the menu entries defined in the front matter of p.
+// Front matter is not trusted, so Pre and Post are HTML escaped unless allowHTML is set.
+// The returned bool reports whether any Pre or Post value with HTML markup was escaped.
+func PageMenusFromPage(ms any, p Page, allowHTML bool) (PageMenus, bool, error) {
+	if ms == nil {
+		return nil, false, nil
 	}
-
 	pm := PageMenus{}
-
-	if !ok {
-		return nil, nil
-	}
-
-	me := MenuEntry{Page: p, Name: p.LinkTitle(), Weight: p.Weight()}
+	me := MenuEntry{}
+	SetPageValues(&me, p)
 
 	// Could be the name of the menu to attach it to
 	mname, err := cast.ToStringE(ms)
@@ -61,7 +60,7 @@ func PageMenusFromPage(p Page) (PageMenus, error) {
 	if err == nil {
 		me.Menu = mname
 		pm[mname] = &me
-		return pm, nil
+		return pm, false, nil
 	}
 
 	// Could be a slice of strings
@@ -72,41 +71,58 @@ func PageMenusFromPage(p Page) (PageMenus, error) {
 			me.Menu = mname
 			pm[mname] = &me
 		}
-		return pm, nil
+		return pm, false, nil
 	}
 
-	var wrapErr = func(err error) error {
-		return errors.Wrapf(err, "unable to process menus for page %q", p.Path())
+	wrapErr := func(err error) error {
+		return fmt.Errorf("unable to process menus for page %q: %w", p.Path(), err)
 	}
 
 	// Could be a structured menu entry
-	menus, err := maps.ToStringMapE(ms)
+	menus, err := hmaps.ToStringMapE(ms)
 	if err != nil {
-		return pm, wrapErr(err)
+		return pm, false, wrapErr(err)
 	}
 
+	var escapedHTML bool
 	for name, menu := range menus {
-		menuEntry := MenuEntry{Page: p, Name: p.LinkTitle(), Weight: p.Weight(), Menu: name}
+		menuEntry := MenuEntry{Menu: name}
 		if menu != nil {
-			ime, err := maps.ToStringMapE(menu)
+			ime, err := hmaps.ToStringMapE(menu)
 			if err != nil {
-				return pm, wrapErr(err)
+				return pm, false, wrapErr(err)
 			}
-
-			if err = menuEntry.MarshallMap(ime); err != nil {
-				return pm, wrapErr(err)
+			if err := mapstructure.WeakDecode(ime, &menuEntry.MenuConfig); err != nil {
+				return pm, false, err
+			}
+			if !allowHTML {
+				var escaped bool
+				menuEntry.Pre, escaped = escapeHTML(menuEntry.Pre)
+				escapedHTML = escapedHTML || escaped
+				menuEntry.Post, escaped = escapeHTML(menuEntry.Post)
+				escapedHTML = escapedHTML || escaped
 			}
 		}
+		SetPageValues(&menuEntry, p)
 		pm[name] = &menuEntry
 	}
 
-	return pm, nil
+	return pm, escapedHTML, nil
+}
+
+// escapeHTML escapes s and reports whether s contained HTML markup.
+func escapeHTML(s template.HTML) (template.HTML, bool) {
+	if s == "" {
+		return s, false
+	}
+	return template.HTML(template.HTMLEscapeString(string(s))), strings.Contains(string(s), "<")
 }
 
 func NewMenuQueryProvider(
 	pagem PageMenusGetter,
 	sitem MenusGetter,
-	p Page) MenuQueryProvider {
+	p Page,
+) MenuQueryProvider {
 	return &pageMenus{
 		p:     p,
 		pagem: pagem,
@@ -122,7 +138,7 @@ type pageMenus struct {
 
 func (pm *pageMenus) HasMenuCurrent(menuID string, me *MenuEntry) bool {
 	if !types.IsNil(me.Page) && me.Page.IsSection() {
-		if ok, _ := me.Page.IsAncestor(pm.p); ok {
+		if ok := me.Page.IsAncestor(pm.p); ok {
 			return true
 		}
 	}
@@ -135,7 +151,7 @@ func (pm *pageMenus) HasMenuCurrent(menuID string, me *MenuEntry) bool {
 
 	if m, ok := menus[menuID]; ok {
 		for _, child := range me.Children {
-			if child.IsEqual(m) {
+			if child.isEqual(m) {
 				return true
 			}
 			if pm.HasMenuCurrent(menuID, child) {
@@ -165,7 +181,7 @@ func (pm *pageMenus) IsMenuCurrent(menuID string, inme *MenuEntry) bool {
 	menus := pm.pagem.Menus()
 
 	if me, ok := menus[menuID]; ok {
-		if me.IsEqual(inme) {
+		if me.isEqual(inme) {
 			return true
 		}
 	}
@@ -182,7 +198,7 @@ func (pm *pageMenus) IsMenuCurrent(menuID string, inme *MenuEntry) bool {
 	// Search for it to make sure that it is in the menu with the given menuId.
 	if menu, ok := pm.sitem.Menus()[menuID]; ok {
 		for _, menuEntry := range menu {
-			if menuEntry.IsSameResource(inme) {
+			if menuEntry.isSameResource(inme) {
 				return true
 			}
 
@@ -200,7 +216,7 @@ func (pm *pageMenus) IsMenuCurrent(menuID string, inme *MenuEntry) bool {
 func (pm *pageMenus) isSameAsDescendantMenu(inme *MenuEntry, parent *MenuEntry) bool {
 	if parent.HasChildren() {
 		for _, child := range parent.Children {
-			if child.IsSameResource(inme) {
+			if child.isSameResource(inme) {
 				return true
 			}
 			descendantFound := pm.isSameAsDescendantMenu(inme, child)

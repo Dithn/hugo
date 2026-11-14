@@ -1,4 +1,4 @@
-// Copyright 2019 The Hugo Authors. All rights reserved.
+// Copyright 2025 The Hugo Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,80 +16,79 @@ package hugolib
 import (
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/gohugoio/hugo/common/loggers"
-
-	qt "github.com/frankban/quicktest"
-)
-
-const pageWithAlias = `---
-title: Has Alias
-aliases: ["/foo/bar/", "rel"]
----
-For some moments the old man did not reply. He stood with bowed head, buried in deep thought. But at last he spoke.
-`
-
-const pageWithAliasMultipleOutputs = `---
-title: Has Alias for HTML and AMP
-aliases: ["/foo/bar/"]
-outputs: ["HTML", "AMP", "JSON"]
----
-For some moments the old man did not reply. He stood with bowed head, buried in deep thought. But at last he spoke.
-`
-
-const (
-	basicTemplate = "<html><body>{{.Content}}</body></html>"
-	aliasTemplate = "<html><body>ALIASTEMPLATE</body></html>"
+	"github.com/gohugoio/hugo/config"
+	"github.com/gohugoio/hugo/output"
 )
 
 func TestAlias(t *testing.T) {
 	t.Parallel()
-	c := qt.New(t)
 
 	tests := []struct {
 		fileSuffix string
 		urlPrefix  string
 		urlSuffix  string
-		settings   map[string]interface{}
+		settings   map[string]any
 	}{
-		{"/index.html", "http://example.com", "/", map[string]interface{}{"baseURL": "http://example.com"}},
-		{"/index.html", "http://example.com/some/path", "/", map[string]interface{}{"baseURL": "http://example.com/some/path"}},
-		{"/index.html", "http://example.com", "/", map[string]interface{}{"baseURL": "http://example.com", "canonifyURLs": true}},
-		{"/index.html", "../..", "/", map[string]interface{}{"relativeURLs": true}},
-		{".html", "", ".html", map[string]interface{}{"uglyURLs": true}},
+		{"/index.html", "http://example.com", "/", map[string]any{"baseURL": "http://example.com"}},
+		{"/index.html", "http://example.com/some/path", "/", map[string]any{"baseURL": "http://example.com/some/path"}},
+		{"/index.html", "http://example.com", "/", map[string]any{"baseURL": "http://example.com", "canonifyURLs": true}},
+		{"/index.html", "../..", "/", map[string]any{"relativeURLs": true, "baseURL": "/"}},
+		{".html", "", ".html", map[string]any{"uglyURLs": true, "baseURL": "/"}},
 	}
 
 	for _, test := range tests {
-		b := newTestSitesBuilder(t)
-		b.WithSimpleConfigFileAndSettings(test.settings).WithContent("blog/page.md", pageWithAlias)
-		b.CreateSites().Build(BuildCfg{})
+		files := `
+-- hugo.toml --
+disableKinds = ["rss", "sitemap", "taxonomy", "term"]
+CONFIG
+-- content/blog/page.md --
+---
+title: Has Alias
+aliases: ["/foo/bar/", "rel"]
+---
+For some moments the old man did not reply. He stood with bowed head, buried in deep thought. But at last he spoke.
+-- layouts/all.html --
+Title: {{ .Title }}|Content: {{ .Content }}|
+`
+		files = strings.Replace(files, "CONFIG", config.FromMapToTOMLString(test.settings), 1)
 
-		c.Assert(len(b.H.Sites), qt.Equals, 1)
-		c.Assert(len(b.H.Sites[0].RegularPages()), qt.Equals, 1)
+		b := Test(t, files)
 
 		// the real page
 		b.AssertFileContent("public/blog/page"+test.fileSuffix, "For some moments the old man")
+
 		// the alias redirectors
-		b.AssertFileContent("public/foo/bar"+test.fileSuffix, "<meta http-equiv=\"refresh\" content=\"0; url="+test.urlPrefix+"/blog/page"+test.urlSuffix+"\" />")
-		b.AssertFileContent("public/blog/rel"+test.fileSuffix, "<meta http-equiv=\"refresh\" content=\"0; url="+test.urlPrefix+"/blog/page"+test.urlSuffix+"\" />")
+		b.AssertFileContent("public/foo/bar"+test.fileSuffix, "<meta http-equiv=\"refresh\" content=\"0; url="+test.urlPrefix+"/blog/page"+test.urlSuffix+"\">")
+		b.AssertFileContent("public/blog/rel"+test.fileSuffix, "<meta http-equiv=\"refresh\" content=\"0; url="+test.urlPrefix+"/blog/page"+test.urlSuffix+"\">")
 	}
 }
 
 func TestAliasMultipleOutputFormats(t *testing.T) {
 	t.Parallel()
 
-	c := qt.New(t)
+	files := `
+-- hugo.toml --
+baseURL = "http://example.com"
+-- layouts/single.html --
+{{ .Content }}
+-- layouts/single.amp.html --
+{{ .Content }}
+-- layouts/single.json --
+{{ .Content }}
+-- content/blog/page.md --
+---
+title: Has Alias for HTML and AMP
+aliases: ["/foo/bar/"]
+outputs: ["html", "amp", "json"]
+---
+For some moments the old man did not reply. He stood with bowed head, buried in deep thought. But at last he spoke.
+`
 
-	b := newTestSitesBuilder(t)
-	b.WithSimpleConfigFile().WithContent("blog/page.md", pageWithAliasMultipleOutputs)
-
-	b.WithTemplates(
-		"_default/single.html", basicTemplate,
-		"_default/single.amp.html", basicTemplate,
-		"_default/single.json", basicTemplate)
-
-	b.CreateSites().Build(BuildCfg{})
+	b := Test(t, files)
 
 	// the real pages
 	b.AssertFileContent("public/blog/page/index.html", "For some moments the old man")
@@ -99,25 +98,38 @@ func TestAliasMultipleOutputFormats(t *testing.T) {
 	// the alias redirectors
 	b.AssertFileContent("public/foo/bar/index.html", "<meta http-equiv=\"refresh\" content=\"0; ")
 	b.AssertFileContent("public/amp/foo/bar/index.html", "<meta http-equiv=\"refresh\" content=\"0; ")
-	c.Assert(b.CheckExists("public/foo/bar/index.json"), qt.Equals, false)
+	b.AssertFileExists("public/foo/bar/index.json", false)
 }
 
 func TestAliasTemplate(t *testing.T) {
 	t.Parallel()
 
-	b := newTestSitesBuilder(t)
-	b.WithSimpleConfigFile().WithContent("page.md", pageWithAlias).WithTemplatesAdded("alias.html", aliasTemplate)
+	files := `
+-- hugo.toml --
+baseURL = "http://example.com"
+-- layouts/single.html --
+Single.
+-- layouts/home.html --
+Home.
+-- layouts/alias.html --
+ALIASTEMPLATE
+-- content/page.md --
+---
+title: "Page"
+aliases: ["/foo/bar/"]
+---
+`
 
-	b.CreateSites().Build(BuildCfg{})
+	b := Test(t, files)
 
 	// the real page
-	b.AssertFileContent("public/page/index.html", "For some moments the old man")
+	b.AssertFileContent("public/page/index.html", "Single.")
 	// the alias redirector
 	b.AssertFileContent("public/foo/bar/index.html", "ALIASTEMPLATE")
 }
 
 func TestTargetPathHTMLRedirectAlias(t *testing.T) {
-	h := newAliasHandler(nil, loggers.NewErrorLogger(), false)
+	h := newAliasHandler(nil, loggers.NewDefault(), false)
 
 	errIsNilForThisOS := runtime.GOOS != "windows"
 
@@ -147,7 +159,7 @@ func TestTargetPathHTMLRedirectAlias(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		path, err := h.targetPathAlias(test.value)
+		path, err := h.targetPathAlias(test.value, output.HTMLFormat)
 		if (err == nil) != test.errIsNil {
 			t.Errorf("Expected err == nil => %t, got: %t. err: %s", test.errIsNil, err == nil, err)
 			continue
@@ -156,4 +168,747 @@ func TestTargetPathHTMLRedirectAlias(t *testing.T) {
 			t.Errorf("Expected: %q, got: %q", test.expected, path)
 		}
 	}
+}
+
+func TestAliasNIssue14053(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+baseURL = "http://example.com"
+-- layouts/all.html --
+All.
+-- content/page.md --
+---
+title: "Page"
+aliases:
+- n
+- y
+- no
+- yes
+---
+`
+	b := Test(t, files)
+
+	b.AssertPublishDir("n/index.html", "yes/index.html", "no/index.html", "yes/index.html")
+}
+
+// Issue 14381
+func TestIssue14381(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+baseURL      = 'https://example.org'
+disableKinds = ['home', 'rss', 'sitemap', 'taxonomy', 'term']
+
+[outputFormats.print]
+  isHTML        = IS_HTML
+  permalinkable = true
+  mediaType     = 'text/html'
+  path          = 'print'
+
+[outputs]
+  page    = ['html', 'print']
+  section = ['html', 'print']
+-- content/foo/s1/_index.md --
+---
+title: s1
+aliases: [s1-alias]
+---
+-- content/foo/s1/p1.md --
+---
+title: p1
+aliases: [p1-alias]
+---
+-- content/foo/s2/_index.md --
+---
+title: s2
+aliases: [/s2-alias]
+---
+-- content/foo/s2/p2.md --
+---
+title: p2
+aliases: [/p2-alias]
+---
+-- layouts/all.html --
+{{ .Title }}
+`
+	// ------------------------------------------------------------------------
+	// Test 1: Create aliases for the html output format only
+	// ------------------------------------------------------------------------
+
+	// public/
+	// ├── foo/
+	// │  ├── s1/
+	// │  │  ├── p1/
+	// │  │  │  └── index.html
+	// │  │  ├── p1-alias/
+	// │  │  │  └── index.html
+	// │  │  └── index.html
+	// │  ├── s1-alias/
+	// │  │  └── index.html
+	// │  ├── s2/
+	// │  │  ├── p2/
+	// │  │  │  └── index.html
+	// │  │  └── index.html
+	// │  └── index.html
+	// ├── p2-alias/
+	// │  └── index.html
+	// ├── print/
+	// │  └── foo/
+	// │      ├── s1/
+	// │      │  ├── p1/
+	// │      │  │  └── index.html
+	// │      │  └── index.html
+	// │      ├── s2/
+	// │      │  ├── p2/
+	// │      │  │  └── index.html
+	// │      │  └── index.html
+	// │      └── index.html
+	// └── s2-alias/
+	//     └── index.html
+
+	f := strings.ReplaceAll(files, "IS_HTML", "false")
+	b := Test(t, f)
+
+	// output format: html
+	b.AssertFileContent(
+		"public/foo/s1-alias/index.html",
+		`<title>https://example.org/foo/s1/</title>`,
+		`<link rel="canonical" href="https://example.org/foo/s1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/foo/s1/">`,
+	)
+	b.AssertFileContent(
+		"public/foo/s1/p1-alias/index.html",
+		`<title>https://example.org/foo/s1/p1/</title>`,
+		`<link rel="canonical" href="https://example.org/foo/s1/p1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/foo/s1/p1/">`,
+	)
+	b.AssertFileContent(
+		"public/s2-alias/index.html",
+		`<title>https://example.org/foo/s2/</title>`,
+		`<link rel="canonical" href="https://example.org/foo/s2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/foo/s2/">`,
+	)
+	b.AssertFileContent(
+		"public/p2-alias/index.html",
+		`<title>https://example.org/foo/s2/p2/</title>`,
+		`<link rel="canonical" href="https://example.org/foo/s2/p2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/foo/s2/p2/">`,
+	)
+
+	// output format: print
+	b.AssertFileExists("public/print/foo/s1-alias/index.html", false)
+	b.AssertFileExists("public/print/foo/s1/p1-alias/index.html", false)
+	b.AssertFileExists("public/print/s2-alias/index.html", false)
+	b.AssertFileExists("public/print/p2-alias/index.html", false)
+
+	// ------------------------------------------------------------------------
+	// Test 2: Create aliases for the html and print output formats
+	// ------------------------------------------------------------------------
+
+	// public/
+	// ├── foo/
+	// │  ├── s1/
+	// │  │  ├── p1/
+	// │  │  │  └── index.html
+	// │  │  ├── p1-alias/
+	// │  │  │  └── index.html
+	// │  │  └── index.html
+	// │  ├── s1-alias/
+	// │  │  └── index.html
+	// │  ├── s2/
+	// │  │  ├── p2/
+	// │  │  │  └── index.html
+	// │  │  └── index.html
+	// │  └── index.html
+	// ├── p2-alias/
+	// │  └── index.html
+	// ├── print/
+	// │  ├── foo/
+	// │  │  ├── s1/
+	// │  │  │  ├── p1/
+	// │  │  │  │  └── index.html
+	// │  │  │  ├── p1-alias/
+	// │  │  │  │  └── index.html
+	// │  │  │  └── index.html
+	// │  │  ├── s1-alias/
+	// │  │  │  └── index.html
+	// │  │  ├── s2/
+	// │  │  │  ├── p2/
+	// │  │  │  │  └── index.html
+	// │  │  │  └── index.html
+	// │  │  └── index.html
+	// │  ├── p2-alias/
+	// │  │  └── index.html
+	// │  └── s2-alias/
+	// │      └── index.html
+	// └── s2-alias/
+	//     └── index.html
+
+	f = strings.ReplaceAll(files, "IS_HTML", "true")
+	b = Test(t, f)
+
+	// output format: html
+	b.AssertFileContent(
+		"public/foo/s1-alias/index.html",
+		`<title>https://example.org/foo/s1/</title>`,
+		`<link rel="canonical" href="https://example.org/foo/s1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/foo/s1/">`,
+	)
+	b.AssertFileContent(
+		"public/foo/s1/p1-alias/index.html",
+		`<title>https://example.org/foo/s1/p1/</title>`,
+		`<link rel="canonical" href="https://example.org/foo/s1/p1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/foo/s1/p1/">`,
+	)
+	b.AssertFileContent(
+		"public/s2-alias/index.html",
+		`<title>https://example.org/foo/s2/</title>`,
+		`<link rel="canonical" href="https://example.org/foo/s2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/foo/s2/">`,
+	)
+	b.AssertFileContent(
+		"public/p2-alias/index.html",
+		`<title>https://example.org/foo/s2/p2/</title>`,
+		`<link rel="canonical" href="https://example.org/foo/s2/p2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/foo/s2/p2/">`,
+	)
+
+	// output format: print
+	b.AssertFileContent(
+		"public/print/foo/s1-alias/index.html",
+		`<title>https://example.org/print/foo/s1/</title>`,
+		`<link rel="canonical" href="https://example.org/foo/s1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/print/foo/s1/">`,
+	)
+	b.AssertFileContent(
+		"public/print/foo/s1/p1-alias/index.html",
+		`<title>https://example.org/print/foo/s1/p1/</title>`,
+		`<link rel="canonical" href="https://example.org/foo/s1/p1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/print/foo/s1/p1/">`,
+	)
+	b.AssertFileContent(
+		"public/print/s2-alias/index.html",
+		`<title>https://example.org/print/foo/s2/</title>`,
+		`<link rel="canonical" href="https://example.org/foo/s2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/print/foo/s2/">`,
+	)
+	b.AssertFileContent(
+		"public/print/p2-alias/index.html",
+		`<title>https://example.org/print/foo/s2/p2/</title>`,
+		`<link rel="canonical" href="https://example.org/foo/s2/p2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/print/foo/s2/p2/">`,
+	)
+}
+
+// Issue 14388
+func TestIssue14388(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+baseURL      = 'https://example.org'
+disableKinds = ['home', 'rss', 'sitemap', 'taxonomy', 'term']
+
+defaultContentLanguage = 'en'
+
+defaultContentLanguageInSubdir = true
+defaultContentRoleInSubdir     = true
+defaultContentVersionInSubdir  = true
+
+[languages.en]
+  weight = 1
+  # baseURL      = 'https://en.example.org/'
+
+[languages.de]
+  weight = 2
+  # baseURL      = 'https://de.example.org/'
+
+[outputFormats.print]
+  isHTML    = true
+  mediaType = 'text/html'
+  path      = 'print'
+  permalinkable = true
+
+[outputs]
+  page    = ['html', 'print']
+  section = ['html', 'print']
+-- content/foo/s1/_index.de.md --
+---
+title: s1 de
+aliases: [s1-alias]
+---
+-- content/foo/s1/_index.en.md --
+---
+title: s1 en
+aliases: [s1-alias]
+---
+-- content/foo/s1/p1.de.md --
+---
+title: p1 de
+aliases: [p1-alias]
+---
+-- content/foo/s1/p1.en.md --
+---
+title: p1 en
+aliases: [p1-alias]
+---
+-- content/foo/s2/_index.de.md --
+---
+title: s2 de
+aliases: [/s2-alias]
+---
+-- content/foo/s2/_index.en.md --
+---
+title: s2 en
+aliases: [/s2-alias]
+---
+-- content/foo/s2/p2.de.md --
+---
+title: p2 de
+aliases: [/p2-alias]
+---
+-- content/foo/s2/p2.en.md --
+---
+title: p2 en
+aliases: [/p2-alias]
+---
+-- layouts/all.html --
+{{ .Title }}
+`
+	// ------------------------------------------------------------------------
+	// Test 1: Multilingual single-host
+	// ------------------------------------------------------------------------
+
+	b := Test(t, files)
+
+	// language: de, output format: html
+	b.AssertFileContent(
+		"public/guest/v1.0.0/de/foo/s1-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/de/foo/s1/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/de/foo/s1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/de/foo/s1/">`,
+	)
+	b.AssertFileContent(
+		"public/guest/v1.0.0/de/foo/s1/p1-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/de/foo/s1/p1/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/de/foo/s1/p1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/de/foo/s1/p1/">`,
+	)
+	b.AssertFileContent(
+		"public/guest/v1.0.0/de/s2-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/de/foo/s2/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/de/foo/s2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/de/foo/s2/">`,
+	)
+	b.AssertFileContent(
+		"public/guest/v1.0.0/de/p2-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/de/foo/s2/p2/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/de/foo/s2/p2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/de/foo/s2/p2/">`,
+	)
+
+	// language: de, output format: print
+	b.AssertFileContent(
+		"public/guest/v1.0.0/de/print/foo/s1-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/de/print/foo/s1/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/de/foo/s1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/de/print/foo/s1/">`,
+	)
+	b.AssertFileContent(
+		"public/guest/v1.0.0/de/print/foo/s1/p1-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/de/print/foo/s1/p1/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/de/foo/s1/p1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/de/print/foo/s1/p1/">`,
+	)
+	b.AssertFileContent(
+		"public/guest/v1.0.0/de/print/s2-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/de/print/foo/s2/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/de/foo/s2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/de/print/foo/s2/">`,
+	)
+	b.AssertFileContent(
+		"public/guest/v1.0.0/de/print/p2-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/de/print/foo/s2/p2/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/de/foo/s2/p2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/de/print/foo/s2/p2/">`,
+	)
+
+	// language: en, output format: html
+	b.AssertFileContent(
+		"public/guest/v1.0.0/en/foo/s1-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/en/foo/s1/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/en/foo/s1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/en/foo/s1/">`,
+	)
+	b.AssertFileContent(
+		"public/guest/v1.0.0/en/foo/s1/p1-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/en/foo/s1/p1/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/en/foo/s1/p1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/en/foo/s1/p1/">`,
+	)
+	b.AssertFileContent(
+		"public/guest/v1.0.0/en/s2-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/en/foo/s2/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/en/foo/s2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/en/foo/s2/">`,
+	)
+	b.AssertFileContent(
+		"public/guest/v1.0.0/en/p2-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/en/foo/s2/p2/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/en/foo/s2/p2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/en/foo/s2/p2/">`,
+	)
+
+	// language: en, output format: print
+	b.AssertFileContent(
+		"public/guest/v1.0.0/en/print/foo/s1-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/en/print/foo/s1/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/en/foo/s1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/en/print/foo/s1/">`,
+	)
+	b.AssertFileContent(
+		"public/guest/v1.0.0/en/print/foo/s1/p1-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/en/print/foo/s1/p1/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/en/foo/s1/p1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/en/print/foo/s1/p1/">`,
+	)
+	b.AssertFileContent(
+		"public/guest/v1.0.0/en/print/s2-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/en/print/foo/s2/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/en/foo/s2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/en/print/foo/s2/">`,
+	)
+	b.AssertFileContent(
+		"public/guest/v1.0.0/en/print/p2-alias/index.html",
+		`<title>https://example.org/guest/v1.0.0/en/print/foo/s2/p2/</title>`,
+		`<link rel="canonical" href="https://example.org/guest/v1.0.0/en/foo/s2/p2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://example.org/guest/v1.0.0/en/print/foo/s2/p2/">`,
+	)
+
+	// ------------------------------------------------------------------------
+	// Test 2: Multilingual multihost
+	// ------------------------------------------------------------------------
+
+	files = strings.ReplaceAll(files, "# baseURL", "baseURL")
+	b = Test(t, files)
+
+	// language: de, output format: html
+	b.AssertFileContent(
+		"public/de/guest/v1.0.0/foo/s1-alias/index.html",
+		`<title>https://de.example.org/guest/v1.0.0/foo/s1/</title>`,
+		`<link rel="canonical" href="https://de.example.org/guest/v1.0.0/foo/s1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://de.example.org/guest/v1.0.0/foo/s1/">`,
+	)
+	b.AssertFileContent(
+		"public/de/guest/v1.0.0/foo/s1/p1-alias/index.html",
+		`<title>https://de.example.org/guest/v1.0.0/foo/s1/p1/</title>`,
+		`<link rel="canonical" href="https://de.example.org/guest/v1.0.0/foo/s1/p1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://de.example.org/guest/v1.0.0/foo/s1/p1/">`,
+	)
+	b.AssertFileContent(
+		"public/de/guest/v1.0.0/s2-alias/index.html",
+		`<title>https://de.example.org/guest/v1.0.0/foo/s2/</title>`,
+		`<link rel="canonical" href="https://de.example.org/guest/v1.0.0/foo/s2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://de.example.org/guest/v1.0.0/foo/s2/">`,
+	)
+	b.AssertFileContent(
+		"public/de/guest/v1.0.0/p2-alias/index.html",
+		`<title>https://de.example.org/guest/v1.0.0/foo/s2/p2/</title>`,
+		`<link rel="canonical" href="https://de.example.org/guest/v1.0.0/foo/s2/p2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://de.example.org/guest/v1.0.0/foo/s2/p2/">`,
+	)
+
+	// language: de, output format: print
+	b.AssertFileContent(
+		"public/de/guest/v1.0.0/print/foo/s1-alias/index.html",
+		`<title>https://de.example.org/guest/v1.0.0/print/foo/s1/</title>`,
+		`<link rel="canonical" href="https://de.example.org/guest/v1.0.0/foo/s1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://de.example.org/guest/v1.0.0/print/foo/s1/">`,
+	)
+	b.AssertFileContent(
+		"public/de/guest/v1.0.0/print/foo/s1/p1-alias/index.html",
+		`<title>https://de.example.org/guest/v1.0.0/print/foo/s1/p1/</title>`,
+		`<link rel="canonical" href="https://de.example.org/guest/v1.0.0/foo/s1/p1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://de.example.org/guest/v1.0.0/print/foo/s1/p1/">`,
+	)
+	b.AssertFileContent(
+		"public/de/guest/v1.0.0/print/s2-alias/index.html",
+		`<title>https://de.example.org/guest/v1.0.0/print/foo/s2/</title>`,
+		`<link rel="canonical" href="https://de.example.org/guest/v1.0.0/foo/s2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://de.example.org/guest/v1.0.0/print/foo/s2/">`,
+	)
+	b.AssertFileContent(
+		"public/de/guest/v1.0.0/print/p2-alias/index.html",
+		`<title>https://de.example.org/guest/v1.0.0/print/foo/s2/p2/</title>`,
+		`<link rel="canonical" href="https://de.example.org/guest/v1.0.0/foo/s2/p2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://de.example.org/guest/v1.0.0/print/foo/s2/p2/">`,
+	)
+
+	// language: en, output format: html
+	b.AssertFileContent(
+		"public/en/guest/v1.0.0/foo/s1-alias/index.html",
+		`<title>https://en.example.org/guest/v1.0.0/foo/s1/</title>`,
+		`<link rel="canonical" href="https://en.example.org/guest/v1.0.0/foo/s1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://en.example.org/guest/v1.0.0/foo/s1/">`,
+	)
+	b.AssertFileContent(
+		"public/en/guest/v1.0.0/foo/s1/p1-alias/index.html",
+		`<title>https://en.example.org/guest/v1.0.0/foo/s1/p1/</title>`,
+		`<link rel="canonical" href="https://en.example.org/guest/v1.0.0/foo/s1/p1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://en.example.org/guest/v1.0.0/foo/s1/p1/">`,
+	)
+	b.AssertFileContent(
+		"public/en/guest/v1.0.0/s2-alias/index.html",
+		`<title>https://en.example.org/guest/v1.0.0/foo/s2/</title>`,
+		`<link rel="canonical" href="https://en.example.org/guest/v1.0.0/foo/s2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://en.example.org/guest/v1.0.0/foo/s2/">`,
+	)
+	b.AssertFileContent(
+		"public/en/guest/v1.0.0/p2-alias/index.html",
+		`<title>https://en.example.org/guest/v1.0.0/foo/s2/p2/</title>`,
+		`<link rel="canonical" href="https://en.example.org/guest/v1.0.0/foo/s2/p2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://en.example.org/guest/v1.0.0/foo/s2/p2/">`,
+	)
+
+	// language: en, output format: print
+	b.AssertFileContent(
+		"public/en/guest/v1.0.0/print/foo/s1-alias/index.html",
+		`<title>https://en.example.org/guest/v1.0.0/print/foo/s1/</title>`,
+		`<link rel="canonical" href="https://en.example.org/guest/v1.0.0/foo/s1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://en.example.org/guest/v1.0.0/print/foo/s1/">`,
+	)
+	b.AssertFileContent(
+		"public/en/guest/v1.0.0/print/foo/s1/p1-alias/index.html",
+		`<title>https://en.example.org/guest/v1.0.0/print/foo/s1/p1/</title>`,
+		`<link rel="canonical" href="https://en.example.org/guest/v1.0.0/foo/s1/p1/">`,
+		`<meta http-equiv="refresh" content="0; url=https://en.example.org/guest/v1.0.0/print/foo/s1/p1/">`,
+	)
+	b.AssertFileContent(
+		"public/en/guest/v1.0.0/print/s2-alias/index.html",
+		`<title>https://en.example.org/guest/v1.0.0/print/foo/s2/</title>`,
+		`<link rel="canonical" href="https://en.example.org/guest/v1.0.0/foo/s2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://en.example.org/guest/v1.0.0/print/foo/s2/">`,
+	)
+	b.AssertFileContent(
+		"public/en/guest/v1.0.0/print/p2-alias/index.html",
+		`<title>https://en.example.org/guest/v1.0.0/print/foo/s2/p2/</title>`,
+		`<link rel="canonical" href="https://en.example.org/guest/v1.0.0/foo/s2/p2/">`,
+		`<meta http-equiv="refresh" content="0; url=https://en.example.org/guest/v1.0.0/print/foo/s2/p2/">`,
+	)
+}
+
+// Issue #14402.
+func TestComprehensiveAliasesRedirectsFile(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+disableAliases = true
+defaultContentLanguageInSubdir = true
+defaultContentRoleInSubdir     = true
+defaultContentVersionInSubdir  = true
+baseURL = "https://example.org/"
+-- content/foo/p1.md --
+---
+aliases: ["/foo/p2/", "../p3/"]
+---
+-- content/foo/p2.md --
+-- content/p3.md --
+-- layouts/home.html --
+Home.
+{{ range $p := site.RegularPages }}{{ range .Aliases }}{{ . | printf "%-35s" }}=>{{ $p.RelPermalink -}}|{{ end -}}{{ end }}
+`
+	b := Test(t, files)
+
+	b.AssertFileContent(
+		"public/guest/v1.0.0/en/index.html",
+		"/guest/v1.0.0/en/foo/p2            =>/guest/v1.0.0/en/foo/p1/|",
+		"/guest/v1.0.0/en/p3                =>/guest/v1.0.0/en/foo/p1/|",
+	)
+}
+
+// Issue 14482
+func TestOutputFormatIsHTMLWithMultilangAliases(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+baseURL = "/"
+defaultContentLanguageInSubdir = true
+disableKinds = ['page', 'section', 'rss', 'sitemap', 'taxonomy', 'term']
+
+[languages.en]
+[languages.de]
+
+[outputFormats.foo]
+baseName = 'foo'
+isHTML = false
+mediaType = 'text/html'
+
+[outputs]
+home = ['html', 'foo']
+-- content/index.de.md --
+---
+title: home de
+---
+-- content/index.en.md --
+---
+title: home en
+---
+-- layouts/home.html --
+Output format: html|Title: {{ .Title }}
+-- layouts/home.foo.html --
+Output format: foo|Title: {{ .Title }}
+`
+
+	b := Test(t, files)
+
+	b.AssertFileContent("public/en/index.html", `Output format: html|Title: home en`)
+	b.AssertFileContent("public/en/foo.html", `Output format: foo|Title: home en`)
+	b.AssertFileContent("public/de/index.html", `Output format: html|Title: home de`)
+	b.AssertFileContent("public/de/foo.html", `Output format: foo|Title: home de`)
+	b.AssertFileContent("public/index.html", `
+<head>
+  <title>/en/</title>
+  <link rel="canonical" href="/en/">
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="0; url=/en/">
+</head>
+	`)
+
+	files = strings.ReplaceAll(files, "isHTML = false", "isHTML = true")
+
+	b = Test(t, files)
+
+	b.AssertFileContent("public/en/index.html", `Output format: html|Title: home en`)
+	b.AssertFileContent("public/en/foo.html", `Output format: foo|Title: home en`)
+	b.AssertFileContent("public/de/index.html", `Output format: html|Title: home de`)
+	b.AssertFileContent("public/de/foo.html", `Output format: foo|Title: home de`)
+	b.AssertFileContent("public/index.html", `
+<head>
+  <title>/en/</title>
+  <link rel="canonical" href="/en/">
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="0; url=/en/">
+</head>
+	`)
+}
+
+// Issue 14807
+func TestDoNotRenderAliasesIfPageNotRendered14807(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+disableKinds = ['home','rss','section','sitemap','taxonomy','term']
+-- content/p1.md --
+---
+title: p1
+aliases: [p1-alias]
+---
+-- content/p2.md --
+---
+title: p2
+aliases: [p2-alias]
+build:
+  render: never
+---
+-- content/p3.md --
+---
+title: p3
+aliases: [p3-alias]
+build:
+  render: link
+---
+-- layouts/page.html --
+{{ .Title }}
+`
+
+	b := Test(t, files)
+
+	b.AssertFileExists("public/p1/index.html", true)
+	b.AssertFileExists("public/p2/index.html", false)
+	b.AssertFileExists("public/p3/index.html", false)
+	b.AssertFileExists("public/p1-alias/index.html", true)
+	b.AssertFileExists("public/p2-alias/index.html", false)
+	b.AssertFileExists("public/p3-alias/index.html", false)
+}
+
+// See issue 15066.
+func TestAliasExplicitExtension(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+disableKinds = ['home','rss','section','sitemap','taxonomy','term']
+uglyURLs = UGLYURLS
+baseURL = "/"
+
+[mediaTypes]
+  [mediaTypes.'text/html']
+    suffixes = SUFFIXES
+
+[outputFormats]
+  [outputFormats.html]
+    mediaType = 'text/html'
+
+-- content/s1/p1.md --
+---
+title: p1
+aliases: [a, b.foo, c.html, d.htm, e.foo.html, f.foo.htm]
+---
+-- layouts/page.html --
+{{ .Title }}
+`
+
+	r := strings.NewReplacer("UGLYURLS", "false", "SUFFIXES", "['html', 'htm']")
+	f := r.Replace(files)
+
+	b := Test(t, f)
+
+	b.AssertFileContent("public/s1/a/index.html", "url=/s1/p1/")
+	b.AssertFileContent("public/s1/b.foo/index.html", "url=/s1/p1/")
+	b.AssertFileContent("public/s1/c.html", "url=/s1/p1/")
+	b.AssertFileContent("public/s1/d.htm", "url=/s1/p1/")
+	b.AssertFileContent("public/s1/e.foo.html", "url=/s1/p1/")
+	b.AssertFileContent("public/s1/f.foo.htm", "url=/s1/p1/")
+
+	r = strings.NewReplacer("UGLYURLS", "false", "SUFFIXES", "['htm', 'html']")
+	f = r.Replace(files)
+
+	b = Test(t, f)
+
+	b.AssertFileContent("public/s1/a/index.htm", "url=/s1/p1/")
+	b.AssertFileContent("public/s1/b.foo/index.htm", "url=/s1/p1/")
+	b.AssertFileContent("public/s1/c.html", "url=/s1/p1/")
+	b.AssertFileContent("public/s1/d.htm", "url=/s1/p1/")
+	b.AssertFileContent("public/s1/e.foo.html", "url=/s1/p1/")
+	b.AssertFileContent("public/s1/f.foo.htm", "url=/s1/p1/")
+
+	r = strings.NewReplacer("UGLYURLS", "true", "SUFFIXES", "['html', 'htm']")
+	f = r.Replace(files)
+
+	b = Test(t, f)
+
+	b.AssertFileContent("public/s1/a.html", "url=/s1/p1.html")
+	b.AssertFileContent("public/s1/b.foo.html", "url=/s1/p1.html")
+	b.AssertFileContent("public/s1/c.html", "url=/s1/p1.html")
+	b.AssertFileContent("public/s1/d.htm", "url=/s1/p1.html")
+	b.AssertFileContent("public/s1/e.foo.html", "url=/s1/p1.html")
+	b.AssertFileContent("public/s1/f.foo.htm", "url=/s1/p1.html")
+
+	r = strings.NewReplacer("UGLYURLS", "true", "SUFFIXES", "['htm', 'html']")
+	f = r.Replace(files)
+
+	b = Test(t, f)
+
+	b.AssertFileContent("public/s1/a.htm", "url=/s1/p1.htm")
+	b.AssertFileContent("public/s1/b.foo.htm", "url=/s1/p1.htm")
+	b.AssertFileContent("public/s1/c.html", "url=/s1/p1.htm")
+	b.AssertFileContent("public/s1/d.htm", "url=/s1/p1.htm")
+	b.AssertFileContent("public/s1/e.foo.html", "url=/s1/p1.htm")
+	b.AssertFileContent("public/s1/f.foo.htm", "url=/s1/p1.htm")
 }

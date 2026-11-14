@@ -16,8 +16,11 @@ package transform
 import (
 	"bytes"
 	"io"
+	"os"
 
 	bp "github.com/gohugoio/hugo/bufferpool"
+	"github.com/gohugoio/hugo/common/herrors"
+	"github.com/gohugoio/hugo/hugofs"
 )
 
 // Transformer is the func that needs to be implemented by a transformation step.
@@ -55,7 +58,7 @@ func NewEmpty() Chain {
 }
 
 // Implements contentTransformer
-// Content is read from the from-buffer and rewritten to to the to-buffer.
+// Content is read from the from-buffer and rewritten to the to-buffer.
 type fromToBuffer struct {
 	from *bytes.Buffer
 	to   *bytes.Buffer
@@ -103,7 +106,17 @@ func (c *Chain) Apply(to io.Writer, from io.Reader) error {
 		}
 
 		if err := tr(fb); err != nil {
-			return err
+			// Write output to a temp file so it can be read by the user for trouble shooting.
+			filename := "output.html"
+			tempfile, ferr := os.CreateTemp("", "hugo-transform-error")
+			if ferr == nil {
+				filename = tempfile.Name()
+				defer tempfile.Close()
+				_, _ = io.Copy(tempfile, fb.from)
+				return herrors.NewFileErrorFromFile(err, filename, hugofs.Os, nil)
+			}
+			return herrors.NewFileErrorFromName(err, filename).UpdateContent(fb.from, nil)
+
 		}
 	}
 

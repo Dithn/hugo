@@ -14,11 +14,9 @@
 package cast
 
 import (
-	"github.com/gohugoio/hugo/common/loggers"
 	"github.com/gohugoio/hugo/config"
-	"github.com/gohugoio/hugo/deps"
+	"github.com/gohugoio/hugo/config/testconfig"
 	"github.com/gohugoio/hugo/docshelper"
-	"github.com/gohugoio/hugo/langs"
 	"github.com/gohugoio/hugo/resources/page"
 	"github.com/gohugoio/hugo/tpl/internal"
 )
@@ -26,14 +24,9 @@ import (
 // This file provides documentation support and is randomly put into this package.
 func init() {
 	docsProvider := func() docshelper.DocProvider {
-		cfg := config.New()
-		d := &deps.Deps{
-			Cfg:                 cfg,
-			Log:                 loggers.NewErrorLogger(),
-			BuildStartListeners: &deps.Listeners{},
-			Language:            langs.NewDefaultLanguage(cfg),
-			Site:                page.NewDummyHugoSite(newTestConfig()),
-		}
+		d := testconfig.GetTestDeps(nil, nil)
+		conf := testconfig.GetTestConfig(nil, newTestConfig())
+		d.Site = page.NewDummyHugoSite(conf)
 
 		var namespaces internal.TemplateFuncsNamespaces
 
@@ -43,7 +36,7 @@ func init() {
 
 		}
 
-		return docshelper.DocProvider{"tpl": map[string]interface{}{"funcs": namespaces}}
+		return docshelper.DocProvider{"tpl": map[string]any{"funcs": namespaces}}
 	}
 
 	docshelper.AddDocProviderFunc(docsProvider)

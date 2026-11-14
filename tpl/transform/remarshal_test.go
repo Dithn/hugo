@@ -11,13 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package transform
+package transform_test
 
 import (
 	"testing"
 
-	"github.com/gohugoio/hugo/config"
 	"github.com/gohugoio/hugo/htesting"
+	"github.com/gohugoio/hugo/hugolib"
+	"github.com/gohugoio/hugo/tpl/transform"
 
 	qt "github.com/frankban/quicktest"
 )
@@ -25,13 +26,12 @@ import (
 func TestRemarshal(t *testing.T) {
 	t.Parallel()
 
-	v := config.New()
-	v.Set("contentDir", "content")
-	ns := New(newDeps(v))
+	b := hugolib.Test(t, "")
+
+	ns := transform.New(b.H.Deps)
 	c := qt.New(t)
 
 	c.Run("Roundtrip variants", func(c *qt.C) {
-
 		tomlExample := `title = 'Test Metadata'
 		
 [[resources]]
@@ -129,7 +129,6 @@ title: Test Metadata
 
 			}
 		}
-
 	})
 
 	c.Run("Comments", func(c *qt.C) {
@@ -179,11 +178,11 @@ a = "b"
 
 		converted, err := ns.Remarshal("toml", input)
 		c.Assert(err, qt.IsNil)
-		c.Assert(converted, qt.Equals, "[params]\n  [params.variables]\n    a = 'b'\n\n\n")
+		c.Assert(converted, qt.Equals, "[params]\n  [params.variables]\n    a = 'b'\n")
 	})
 
 	c.Run("Map input", func(c *qt.C) {
-		input := map[string]interface{}{
+		input := map[string]any{
 			"hello": "world",
 		}
 
@@ -199,4 +198,72 @@ a = "b"
 		_, err = ns.Remarshal("json", "asdf")
 		c.Assert(err, qt.Not(qt.IsNil))
 	})
+}
+
+func TestRemarshaBillionLaughs(t *testing.T) {
+	t.Parallel()
+
+	yamlBillionLaughs := `
+a: &a [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _]
+b: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]
+c: &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]
+d: &d [*c, *c, *c, *c, *c, *c, *c, *c, *c, *c]
+e: &e [*d, *d, *d, *d, *d, *d, *d, *d, *d, *d]
+f: &f [*e, *e, *e, *e, *e, *e, *e, *e, *e, *e]
+g: &g [*f, *f, *f, *f, *f, *f, *f, *f, *f, *f]
+h: &h [*g, *g, *g, *g, *g, *g, *g, *g, *g, *g]
+i: &i [*h, *h, *h, *h, *h, *h, *h, *h, *h, *h]
+`
+
+	yamlMillionLaughs := `
+a: &a [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _]
+b: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]
+c: &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]
+d: &d [*c, *c, *c, *c, *c, *c, *c, *c, *c, *c]
+e: &e [*d, *d, *d, *d, *d, *d, *d, *d, *d, *d]
+f: &f [*e, *e, *e, *e, *e, *e, *e, *e, *e, *e]
+`
+
+	yamlTenThousandLaughs := `
+a: &a [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _]
+b: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]
+c: &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]
+d: &d [*c, *c, *c, *c, *c, *c, *c, *c, *c, *c]
+
+`
+
+	yamlThousandLaughs := `
+a: &a [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _]
+b: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]
+c: &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]
+
+`
+
+	b := hugolib.Test(t, "")
+
+	ns := transform.New(b.H.Deps)
+
+	for _, test := range []struct {
+		name string
+		data string
+	}{
+		{"10k", yamlTenThousandLaughs},
+		{"1M", yamlMillionLaughs},
+		{"1B", yamlBillionLaughs},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			c := qt.New(t)
+			_, err := ns.Remarshal("json", test.data)
+			c.Assert(err, qt.Not(qt.IsNil))
+		})
+	}
+
+	// Thousand laughs should be ok.
+	// It produces about 29KB of JSON,
+	// which is still a large output for such a large input,
+	// but there may be use cases for this.
+	_, err := ns.Remarshal("json", yamlThousandLaughs)
+	c := qt.New(t)
+	c.Assert(err, qt.IsNil)
 }

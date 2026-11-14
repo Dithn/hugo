@@ -14,67 +14,88 @@
 package collections
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"time"
 
-	"github.com/mitchellh/hashstructure"
-	"github.com/pkg/errors"
+	"github.com/gohugoio/hugo/common/hashing"
+	"github.com/gohugoio/hugo/common/hreflect"
+	"github.com/gohugoio/hugo/common/types"
+	"github.com/gohugoio/hugo/resources/resource"
 )
 
 var (
 	zero      reflect.Value
-	errorType = reflect.TypeOf((*error)(nil)).Elem()
-	timeType  = reflect.TypeOf((*time.Time)(nil)).Elem()
+	errorType = reflect.TypeFor[error]()
 )
-
-func numberToFloat(v reflect.Value) (float64, error) {
-	switch kind := v.Kind(); {
-	case isFloat(kind):
-		return v.Float(), nil
-	case isInt(kind):
-		return float64(v.Int()), nil
-	case isUint(kind):
-		return float64(v.Uint()), nil
-	case kind == reflect.Interface:
-		return numberToFloat(v.Elem())
-	default:
-		return 0, fmt.Errorf("invalid kind %s in numberToFloat", kind)
-	}
-}
 
 // normalizes different numeric types if isNumber
 // or get the hash values if not Comparable (such as map or struct)
 // to make them comparable
-func normalize(v reflect.Value) interface{} {
+func normalize(v reflect.Value) any {
+	if v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return nil
+		}
+		v = v.Elem()
+	}
 	k := v.Kind()
-
 	switch {
 	case !v.Type().Comparable():
-		h, err := hashstructure.Hash(v.Interface(), nil)
-		if err != nil {
-			panic(err)
-		}
-		return h
-	case isNumber(k):
-		f, err := numberToFloat(v)
-		if err == nil {
-			return f
-		}
+		return hashing.HashUint64(v.Interface())
+	case hreflect.IsNumber(k):
+		return numericKey(v)
 	}
-	return v.Interface()
+
+	vv := types.Unwrapv(v.Interface())
+	if t, ok := vv.(time.Time); ok {
+		return t.Round(0).UTC()
+	}
+	if ip, ok := vv.(resource.TransientIdentifier); ok {
+		return ip.TransientKey()
+	}
+
+	return vv
+}
+
+// numericKey returns a key that is equal for numerically equal values
+// regardless of their Go type, without losing precision.
+func numericKey(v reflect.Value) any {
+	switch k := v.Kind(); {
+	case hreflect.IsInt(k):
+		return v.Int()
+	case hreflect.IsUint(k):
+		u := v.Uint()
+		if u > math.MaxInt64 {
+			return u
+		}
+		return int64(u)
+	default:
+		f := v.Float()
+		if f == math.Trunc(f) {
+			if f >= -(1<<63) && f < 1<<63 {
+				return int64(f)
+			}
+			if f >= 1<<63 && f < 1<<64 {
+				return uint64(f)
+			}
+		}
+		return f
+	}
 }
 
 // collects identities from the slices in seqs into a set. Numeric values are normalized,
 // pointers unwrapped.
-func collectIdentities(seqs ...interface{}) (map[interface{}]bool, error) {
-	seen := make(map[interface{}]bool)
+func collectIdentities(seqs ...any) (map[any]bool, error) {
+	seen := make(map[any]bool)
 	for _, seq := range seqs {
 		v := reflect.ValueOf(seq)
 		switch v.Kind() {
 		case reflect.Array, reflect.Slice:
-			for i := 0; i < v.Len(); i++ {
-				ev, _ := indirectInterface(v.Index(i))
+			for i := range v.Len() {
+				ev, _ := hreflect.Indirect(v.Index(i))
 
 				if !ev.Type().Comparable() {
 					return nil, errors.New("elements must be comparable")
@@ -98,76 +119,29 @@ func convertValue(v reflect.Value, to reflect.Type) (reflect.Value, error) {
 	}
 	switch kind := to.Kind(); {
 	case kind == reflect.String:
-		s, err := toString(v)
-		return reflect.ValueOf(s), err
-	case isNumber(kind):
-		return convertNumber(v, kind)
+		return hreflect.ToStringValueE(v)
+	case hreflect.IsNumber(kind):
+		return convertNumber(v, to)
 	default:
-		return reflect.Value{}, errors.Errorf("%s is not assignable to %s", v.Type(), to)
+		return reflect.Value{}, fmt.Errorf("%s is not assignable to %s", v.Type(), to)
 	}
 }
 
-// There are potential overflows in this function, but the downconversion of
-// int64 etc. into int8 etc. is coming from the synthetic unit tests for Union etc.
-// TODO(bep) We should consider normalizing the slices to int64 etc.
-func convertNumber(v reflect.Value, to reflect.Kind) (reflect.Value, error) {
-	var n reflect.Value
-	if isFloat(to) {
-		f, err := toFloat(v)
-		if err != nil {
-			return n, err
-		}
-		switch to {
-		case reflect.Float32:
-			n = reflect.ValueOf(float32(f))
-		default:
-			n = reflect.ValueOf(float64(f))
-		}
-	} else if isInt(to) {
-		i, err := toInt(v)
-		if err != nil {
-			return n, err
-		}
-		switch to {
-		case reflect.Int:
-			n = reflect.ValueOf(int(i))
-		case reflect.Int8:
-			n = reflect.ValueOf(int8(i))
-		case reflect.Int16:
-			n = reflect.ValueOf(int16(i))
-		case reflect.Int32:
-			n = reflect.ValueOf(int32(i))
-		case reflect.Int64:
-			n = reflect.ValueOf(int64(i))
-		}
-	} else if isUint(to) {
-		i, err := toUint(v)
-		if err != nil {
-			return n, err
-		}
-		switch to {
-		case reflect.Uint:
-			n = reflect.ValueOf(uint(i))
-		case reflect.Uint8:
-			n = reflect.ValueOf(uint8(i))
-		case reflect.Uint16:
-			n = reflect.ValueOf(uint16(i))
-		case reflect.Uint32:
-			n = reflect.ValueOf(uint32(i))
-		case reflect.Uint64:
-			n = reflect.ValueOf(uint64(i))
-		}
-
+func convertNumber(v reflect.Value, typ reflect.Type) (reflect.Value, error) {
+	if cv, ok := hreflect.ConvertIfPossible(v, typ); ok {
+		return cv, nil
 	}
-
-	if !n.IsValid() {
-		return n, errors.New("invalid values")
+	if v.Kind() == reflect.Interface {
+		v = v.Elem()
 	}
-
-	return n, nil
+	if hreflect.IsFloat(v.Kind()) && hreflect.IsFloat(typ.Kind()) {
+		// Narrowing float64 to float32 loses precision, but that is expected.
+		return v.Convert(typ), nil
+	}
+	return reflect.Value{}, fmt.Errorf("unable to convert value of type %q to %q", v.Type().String(), typ.String())
 }
 
-func newSliceElement(items interface{}) interface{} {
+func newSliceElement(items any) any {
 	tp := reflect.TypeOf(items)
 	if tp == nil {
 		return nil
@@ -175,42 +149,11 @@ func newSliceElement(items interface{}) interface{} {
 	switch tp.Kind() {
 	case reflect.Array, reflect.Slice:
 		tp = tp.Elem()
-		if tp.Kind() == reflect.Ptr {
+		if tp.Kind() == reflect.Pointer {
 			tp = tp.Elem()
 		}
 
 		return reflect.New(tp).Interface()
 	}
 	return nil
-}
-
-func isNumber(kind reflect.Kind) bool {
-	return isInt(kind) || isUint(kind) || isFloat(kind)
-}
-
-func isInt(kind reflect.Kind) bool {
-	switch kind {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return true
-	default:
-		return false
-	}
-}
-
-func isUint(kind reflect.Kind) bool {
-	switch kind {
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return true
-	default:
-		return false
-	}
-}
-
-func isFloat(kind reflect.Kind) bool {
-	switch kind {
-	case reflect.Float32, reflect.Float64:
-		return true
-	default:
-		return false
-	}
 }
